@@ -61,6 +61,14 @@ class SourceCoverage:
     horizon_start: Optional[datetime] = None  # earliest record actually available
     horizon_end: Optional[datetime] = None    # latest record actually available
     record_count: int = 0
+    # Evidence conservation. ``records_scanned`` is how many raw units the parser
+    # examined for event content; ``unparseable`` is how many of those it could not
+    # decode and therefore dropped. ``unparseable`` MUST be zero on a healthy
+    # source; any non-zero value is surfaced as a conservation gap so a record can
+    # never vanish silently (the "225 in, 200 out, success reported" failure).
+    records_scanned: int = 0
+    unparseable: int = 0
+    unparseable_detail: str = ""
     instrumentation: List[InstrumentationCheck] = field(default_factory=list)
     locations: List[str] = field(default_factory=list)  # files/paths consulted
     # True when the collector saw evidence its history is retention-bounded (a
@@ -112,6 +120,9 @@ class SourceCoverage:
             "horizon_start": self.horizon_start.isoformat() if self.horizon_start else None,
             "horizon_end": self.horizon_end.isoformat() if self.horizon_end else None,
             "record_count": self.record_count,
+            "records_scanned": self.records_scanned,
+            "unparseable": self.unparseable,
+            "unparseable_detail": self.unparseable_detail,
             "retention_bounded": self.retention_bounded,
             "instrumentation": [c.to_dict() for c in self.instrumentation],
             "locations": list(self.locations),
@@ -220,11 +231,38 @@ class CoverageLedger:
                 ))
         return out
 
+    def conservation_gaps(self) -> List[Gap]:
+        """A gap for every source that dropped a record it could not decode.
+
+        This is the evidence-conservation guarantee: a parser that reads N raw
+        units and emits fewer must account for the difference. Any ``unparseable``
+        count > 0 is disclosed here rather than being swallowed, so OpenPath can
+        never report success while records have silently disappeared.
+        """
+        out: List[Gap] = []
+        for s in self.sources:
+            if s.unparseable > 0:
+                out.append(Gap(
+                    question="conservation",
+                    reason=(
+                        f"{s.source_id}: {s.unparseable} record(s) could not be "
+                        f"decoded and are therefore unaccounted for"
+                        + (f" ({s.unparseable_detail})" if s.unparseable_detail else "")
+                        + "; the evidence from this source may be incomplete."
+                    ),
+                    source_id=s.source_id,
+                    remedy="inspect the source for truncation or corruption and "
+                           "provide an intact copy (or an evidence bundle captured "
+                           "with integrity) covering the window.",
+                ))
+        return out
+
     def all_gaps(self) -> List[Gap]:
-        """Facet-declared gaps plus derived horizon shortfalls, de-duplicated."""
+        """Facet gaps + derived horizon shortfalls + conservation gaps, de-duped."""
         seen = set()
         out: List[Gap] = []
-        for g in list(self.gaps) + self.horizon_shortfalls():
+        for g in (list(self.gaps) + self.horizon_shortfalls()
+                  + self.conservation_gaps()):
             key = (g.question, g.reason, g.source_id)
             if key not in seen:
                 seen.add(key)

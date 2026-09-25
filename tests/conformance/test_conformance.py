@@ -64,6 +64,18 @@ class Base(unittest.TestCase):
         window = window or self.win()
         return Engine().analyze(self.env(root), user, window, facet)
 
+    def cli(self, *argv):
+        """Run the product exactly as a user would: through ``main`` (the shipped
+        path), with ``now`` pinned. Returns (exit_code, stdout)."""
+        import contextlib
+        import io
+        from openpath.cli import main
+        args = list(argv) + ["--now", NOW.isoformat()]
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = main(args)
+        return rc, buf.getvalue()
+
     # -- shared scenario: a fully instrumented host with alice active --------- #
 
     def fully_instrumented(self) -> Path:
@@ -905,6 +917,97 @@ class TestReadiness(Base):
         self.assertTrue(blind)
         # at least one blind family carries an actionable remedy
         self.assertTrue(any(g.remedy for fr in blind for g in fr.gaps))
+
+
+class TestEvidenceConservation(Base):
+    """Gate 1: no parser may drop a record it read without disclosing it.
+
+    Every assertion runs through the shipped CLI (`main`), not an internal
+    function, so the guarantee is proven on the product path. The pass condition
+    is literally "0 silent loss": records_in == events_out + unparseable, and any
+    non-zero ``unparseable`` is surfaced as a conservation gap.
+    """
+
+    def test_clean_host_reports_zero_silent_loss(self):
+        root = self.fully_instrumented()
+        rc, out = self.cli("--coverage", "--data-root", str(root))
+        self.assertEqual(rc, 0)
+        self.assertIn("EVIDENCE CONSERVATION", out)
+        self.assertIn("0 silent loss", out)
+        self.assertNotIn("CONSERVATION:", out)  # no per-source '!' warning line
+
+    def test_clean_host_json_has_no_conservation_gap(self):
+        root = self.fully_instrumented()
+        rc, out = self.cli("--coverage", "--format", "json", "--data-root", str(root))
+        data = json.loads(out)
+        for s in data["coverage"]["sources"]:
+            self.assertEqual(s["unparseable"], 0,
+                             f"{s['source_id']} dropped {s['unparseable']} record(s)")
+        cons = [g for g in data["coverage"]["gaps"] if g["question"] == "conservation"]
+        self.assertEqual(cons, [])
+
+    def test_truncated_wtmp_tail_is_disclosed(self):
+        root = self.fully_instrumented()
+        # Append a partial (< 384-byte) record: exactly what a truncated/corrupt
+        # binary log looks like, and what integer-division parsing would drop.
+        with open(root / "var/log/wtmp", "ab") as fh:
+            fh.write(b"\x07\x00\x00\x00partial-truncated-record")
+        rc, out = self.cli("--coverage", "--data-root", str(root))
+        self.assertIn("FAIL", out)
+        self.assertIn("wtmp", out)
+        self.assertIn("truncated tail", out)
+        # And it must be a real disclosed gap in the structured output.
+        _rc, jout = self.cli("--coverage", "--format", "json", "--data-root", str(root))
+        gaps = [g for g in json.loads(jout)["coverage"]["gaps"]
+                if g["question"] == "conservation"]
+        self.assertTrue(gaps and any("wtmp" in g["reason"] for g in gaps))
+
+    def test_unparseable_package_line_is_counted_not_dropped(self):
+        root = self.fully_instrumented()
+        # A genuine transaction line (matches the Installed: shape) whose timestamp
+        # cannot be parsed -- previously dropped silently by `except ValueError`.
+        with open(root / "var/log/dnf.rpm.log", "a") as fh:
+            fh.write("NOT-A-TIMESTAMP INFO Installed: ghostpkg-1.0-1.fc40.x86_64\n")
+        rc, out = self.cli("--coverage", "--format", "json", "--data-root", str(root))
+        pkg = [s for s in json.loads(out)["coverage"]["sources"]
+               if s["source_id"] == "packages"][0]
+        self.assertEqual(pkg["unparseable"], 1)
+
+    def test_malformed_journal_line_is_counted(self):
+        root = self.fully_instrumented()
+        with open(root / "var/log/openpath/journal-sshd.jsonl", "a") as fh:
+            fh.write("{ this is not valid json\n")
+        rc, out = self.cli("--coverage", "--format", "json", "--data-root", str(root))
+        j = [s for s in json.loads(out)["coverage"]["sources"]
+             if s["source_id"] == "journal.sshd"][0]
+        self.assertEqual(j["unparseable"], 1)
+
+    def test_large_result_is_capped_in_text_but_complete_in_json(self):
+        """The narration cap must not be silent loss: text discloses the overflow
+        and JSON carries every event, so the 'full detail in --format json' promise
+        is true."""
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.enable_execve()
+        h.boot(ago(hours=20))
+        n = 75  # more than the 60-event narration cap
+        for i in range(n):
+            h.exec(1001, 1001, ["do-thing", str(i)], "/usr/bin/do-thing",
+                   ago(hours=5, minutes=i), comm="do-thing")
+        h.write()
+
+        _rc, text = self.cli("--user", "alice", "--facet", "commands",
+                             "--data-root", str(root))
+        self.assertIn("further event(s) not narrated", text)  # overflow disclosed
+
+        _rc, jout = self.cli("--user", "alice", "--facet", "commands",
+                             "--format", "json", "--data-root", str(root))
+        data = json.loads(jout)
+        # JSON is complete: every command is both an event and a cited evidence entry.
+        self.assertEqual(len(data["finding"]["events"]), n)
+        self.assertEqual(len(data["evidence"]), n)
+        self.assertIsNone(data["narrative_overflow"])
 
 
 class TestCatalog(Base):

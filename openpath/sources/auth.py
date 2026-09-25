@@ -154,6 +154,7 @@ class SyslogAuthCollector(Collector):
             source_id=self.source_id, status=status,
             detail=f"{count} auth syslog lines parsed",
             horizon_start=hmin, horizon_end=hmax, record_count=count,
+            records_scanned=count,
             locations=[str(p) for _r, p in locs],
             retention_bounded=any(".log.1" in str(p) or "secure." in str(p)
                                   for _r, p in locs),

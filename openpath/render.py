@@ -19,22 +19,25 @@ from openpath.narrate import narrate_finding
 _OVERVIEW_FACETS = {"core", "gaps"}
 
 
-def _narration_for(f):
+def _narration_for(f, *, full: bool = False):
     """(sentences, evidence, overflow) with the right cap for the facet.
 
     Overview facets (Core, Gaps) carry a structured overview, not a per-event
-    narrative. The Evidence facet is exhaustive (no cap).
+    narrative. The Evidence facet is always exhaustive. ``full=True`` (used by the
+    JSON renderer) disables the cap for every facet, so the machine-readable output
+    is complete -- which is what makes the text overflow note's "full detail in
+    --format json" a true statement rather than a broken promise.
     """
     if f.facet in _OVERVIEW_FACETS:
         return [], [], None
-    if f.facet == "evidence":
+    if full or f.facet == "evidence":
         return narrate_finding(f, limit=None)
     return narrate_finding(f)
 
 
 def render_json(result: AnalysisResult) -> str:
     f = result.finding
-    sentences, evidence, overflow = _narration_for(f)
+    sentences, evidence, overflow = _narration_for(f, full=True)
     payload = {
         "question_family": f.question_family,
         "facet": f.facet,
@@ -78,10 +81,26 @@ def render_readiness(report: ReadinessReport) -> str:
                    if cov.horizon_start and cov.horizon_end else "n/a")
         lines.append(f"  {cov.source_id:14s} {cov.status.value:14s} "
                      f"records={cov.record_count}  retained {horizon}")
+        if cov.unparseable:
+            lines.append(f"       ! CONSERVATION: {cov.unparseable} record(s) "
+                         f"could not be decoded and are unaccounted for"
+                         + (f" ({cov.unparseable_detail})"
+                            if cov.unparseable_detail else ""))
         for ic in cov.instrumentation:
             if not ic.present:
                 lines.append(f"       - off: {ic.name}"
                              + (f" ({ic.detail})" if ic.detail else ""))
+
+    # Evidence conservation summary: zero silent loss is the pass condition.
+    cons = report.ledger.conservation_gaps()
+    lines.append("")
+    lines.append("EVIDENCE CONSERVATION")
+    if cons:
+        lines.append(f"  FAIL: {len(cons)} source(s) dropped records that could not "
+                     f"be decoded (see '!' above). Evidence may be incomplete.")
+    else:
+        lines.append("  OK: every record examined was accounted for "
+                     "(0 silent loss across all sources).")
     lines.append("")
     return "\n".join(lines)
 

@@ -32,6 +32,9 @@ class BtmpCollector(Collector):
     def collect(self, env: Env, window: TimeRange) -> CollectResult:
         records = []
         locations: List[str] = []
+        scanned = 0
+        unparseable = 0
+        detail_bits: List[str] = []
         for rel in _BTMP_PATHS:
             p = env.path(rel)
             if not p.exists():
@@ -40,8 +43,15 @@ class BtmpCollector(Collector):
             try:
                 data = p.read_bytes()
             except OSError:
+                unparseable += 1
+                detail_bits.append(f"{rel}: unreadable")
                 continue
-            records.extend(parse_utmp_bytes(data, rel))
+            recs, n, leftover = parse_utmp_bytes(data, rel)
+            records.extend(recs)
+            scanned += n
+            if leftover:
+                unparseable += 1
+                detail_bits.append(f"{rel}: {leftover}-byte truncated tail record")
 
         if not locations:
             cov = SourceCoverage(
@@ -79,6 +89,8 @@ class BtmpCollector(Collector):
             source_id=self.source_id, status=status,
             detail=f"{len(records)} btmp records parsed",
             horizon_start=hstart, horizon_end=hend, record_count=len(records),
+            records_scanned=scanned, unparseable=unparseable,
+            unparseable_detail="; ".join(detail_bits),
             locations=locations,
             retention_bounded=any("btmp." in loc for loc in locations),
             instrumentation=[InstrumentationCheck("btmp accounting present", True)],

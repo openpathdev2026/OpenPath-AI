@@ -204,9 +204,11 @@ class GapsFacet(Facet):
                 if cov.horizon_start and cov.horizon_end else "n/a"
             )
             covers = cov.covers_window(ctx.window, ctx.ledger.effective_start())
+            conservation = (f"; UNPARSEABLE={cov.unparseable}"
+                            if cov.unparseable else "")
             f.notes.append(
                 f"  {cov.source_id}: {cov.status.value}; retained {horizon}; "
-                f"covers requested window: {covers}; {cov.detail}"
+                f"covers requested window: {covers}{conservation}; {cov.detail}"
             )
             for ic in cov.instrumentation:
                 if not ic.present:

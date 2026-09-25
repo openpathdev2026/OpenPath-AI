@@ -66,6 +66,7 @@ class PackageCollector(Collector):
         # in-window result set, not by the total number of transactions.
         hmin = hmax = None
         count = 0
+        unparseable = 0
 
         def _seen(ts):
             nonlocal hmin, hmax, count
@@ -93,6 +94,9 @@ class PackageCollector(Collector):
                     try:
                         ts = parse_instant(m.group("ts"), env.local_tz)
                     except ValueError:
+                        # A real transaction line whose timestamp we cannot parse:
+                        # count it, do not drop it silently.
+                        unparseable += 1
                         continue
                     _seen(ts)
                     action = _DNF_VERB_ACTION.get(
@@ -127,6 +131,7 @@ class PackageCollector(Collector):
                         ts = parse_instant(f"{m.group('date')} {m.group('time')}",
                                            env.local_tz)
                     except ValueError:
+                        unparseable += 1
                         continue
                     _seen(ts)
                     ev = Event(
@@ -164,7 +169,11 @@ class PackageCollector(Collector):
             status=status,
             detail=f"{count} package transactions from {sorted(managers_seen)}",
             horizon_start=hstart, horizon_end=hend,
-            record_count=count, locations=locations,
+            record_count=count,
+            records_scanned=count + unparseable, unparseable=unparseable,
+            unparseable_detail=("transaction line(s) with an unparseable timestamp"
+                                if unparseable else ""),
+            locations=locations,
             retention_bounded=any(".log." in loc for loc in locations),
             instrumentation=[
                 InstrumentationCheck("package transaction log present", True),

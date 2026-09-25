@@ -57,8 +57,8 @@ class SshdJournalCollector(Collector):
 
     def _load_entries(
         self, env: Env, window: TimeRange
-    ) -> Tuple[List[dict], List[str], bool, str]:
-        """Return (entries, locations, exported_live, locator_base)."""
+    ) -> Tuple[List[dict], List[str], bool, str, int]:
+        """Return (entries, locations, exported_live, locator_base, unparseable)."""
         for rel in _EXPORT_PATHS:
             p = env.path(rel)
             if p.exists():
@@ -66,35 +66,40 @@ class SshdJournalCollector(Collector):
                     text = p.read_text(encoding="utf-8", errors="replace")
                 except OSError:
                     continue
-                entries = []
-                for line in text.splitlines():
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        entries.append(json.loads(line))
-                    except json.JSONDecodeError:
-                        # Support a single JSON array file too.
-                        try:
-                            arr = json.loads(text)
-                            if isinstance(arr, list):
-                                entries = arr
-                            break
-                        except json.JSONDecodeError:
+                # Some exports are a single JSON array; most are one object per
+                # line (JSONL). Try the array form first, then fall back to JSONL,
+                # counting any line that fails to decode rather than dropping it.
+                entries: List[dict] = []
+                unparseable = 0
+                try:
+                    arr = json.loads(text)
+                except json.JSONDecodeError:
+                    arr = None
+                if isinstance(arr, list):
+                    entries = arr
+                else:
+                    for line in text.splitlines():
+                        line = line.strip()
+                        if not line:
                             continue
+                        try:
+                            entries.append(json.loads(line))
+                        except json.JSONDecodeError:
+                            unparseable += 1
                 # Return a relative locator base so evidence never leaks the
                 # analyst's local bundle path.
-                return entries, [str(p)], False, rel
+                return entries, [str(p)], False, rel, unparseable
 
         # Live fallback: only when analyzing the real host.
         if str(env.data_root) == "/":
-            entries = self._journalctl_live(window)
-            if entries is not None:
+            live = self._journalctl_live(window)
+            if live is not None:
+                entries, unparseable = live
                 return entries, ["journalctl -u sshd -o json"], True, \
-                    "journalctl:_COMM=sshd"
-        return [], [], False, ""
+                    "journalctl:_COMM=sshd", unparseable
+        return [], [], False, "", 0
 
-    def _journalctl_live(self, window: TimeRange) -> Optional[List[dict]]:
+    def _journalctl_live(self, window: TimeRange) -> Optional[Tuple[List[dict], int]]:
         try:
             since = window.start.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
             until = window.end.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
@@ -108,6 +113,7 @@ class SshdJournalCollector(Collector):
         if proc.returncode != 0:
             return None
         entries = []
+        unparseable = 0
         for line in proc.stdout.splitlines():
             line = line.strip()
             if not line:
@@ -115,11 +121,11 @@ class SshdJournalCollector(Collector):
             try:
                 entries.append(json.loads(line))
             except json.JSONDecodeError:
-                continue
-        return entries
+                unparseable += 1
+        return entries, unparseable
 
     def collect(self, env: Env, window: TimeRange) -> CollectResult:
-        entries, locations, live, locbase = self._load_entries(env, window)
+        entries, locations, live, locbase, unparseable = self._load_entries(env, window)
 
         if not locations:
             cov = SourceCoverage(
@@ -165,6 +171,10 @@ class SshdJournalCollector(Collector):
             horizon_start=hstart,
             horizon_end=hend,
             record_count=len(entries),
+            records_scanned=len(entries) + unparseable,
+            unparseable=unparseable,
+            unparseable_detail=("journal line(s) that were not valid JSON"
+                                if unparseable else ""),
             locations=locations,
             instrumentation=[InstrumentationCheck("sshd journal available", True)],
         )

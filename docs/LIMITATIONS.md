@@ -29,7 +29,30 @@ boundaries, stated plainly.
 - **Natural-language parsing** of a question is best-effort; `--user`, `--facet`,
   `--window`/`--since`/`--until`, and `--around` are the authoritative inputs.
 
+## Evidence conservation (no silent loss)
+A record OpenPath reads must be either turned into a cited event or explicitly
+counted as undecodable — it may never just vanish. Each collector reports
+`records_scanned` and `unparseable`; any `unparseable > 0` is surfaced as a
+`conservation` gap and as a **FAIL** line in `--coverage`. What each source counts:
+
+- **wtmp / btmp** — a truncated or corrupt trailing record (a file whose size is
+  not a whole multiple of the 384-byte `struct utmp`), and an existing-but-unreadable
+  file. Fully conserved.
+- **auditd** — a line that looks like an audit record (`type=` + `audit(...)`) but
+  whose event id/type cannot be decoded.
+- **sshd journal** — a JSONL line that is not valid JSON.
+- **packages** — a transaction line (matches the `Installed:`/`install` shape) whose
+  timestamp cannot be parsed.
+- **auth (syslog)** — counts lines carrying a parseable timestamp. Lines with no
+  recognizable syslog timestamp are treated as noise, not loss; conservation here
+  covers timestamp-bearing lines only (documented so the guarantee is not overstated).
+
+The narration cap (60 events in text output) is **not** loss: the text output
+discloses the overflow, and `--format json` carries every event and every cited
+evidence entry with no cap.
+
 ## What "100% accuracy" means here
 Not omniscience — that is impossible on any host. It means **soundness** (every
-asserted fact is true and cited) plus **disclosure** (every limit is stated). An
-answer is correct when it invents nothing and hides nothing.
+asserted fact is true and cited) plus **disclosure** (every limit is stated) plus
+**conservation** (no record read is dropped without being counted and disclosed).
+An answer is correct when it invents nothing and hides nothing.

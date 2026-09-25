@@ -6,6 +6,16 @@ based on Keep a Changelog; dates are UTC.
 ## [Unreleased]
 
 ### Added
+- **Evidence conservation (no silent loss).** Every collector now reports
+  `records_scanned` and `unparseable`; a record that is read but cannot be decoded
+  is **counted and disclosed** as a `conservation` gap instead of vanishing. Wired
+  for the truncated-tail case in the binary wtmp/btmp parser, undecodable audit
+  record lines, malformed sshd-journal JSON, and package lines with an unparseable
+  timestamp. `--coverage` prints a per-source `! CONSERVATION` warning and an
+  `EVIDENCE CONSERVATION: OK/FAIL` verdict (pass = 0 silent loss). The narration
+  cap is no longer a hidden loss: text discloses the overflow and `--format json`
+  now carries every event and cited evidence entry with no cap. `TestEvidenceConservation`
+  proves all of this through the shipped CLI path.
 - **Frozen question catalog (`openpath/catalog.py`, `--catalog`).** The 15 client
   questions OpenPath promises to answer are now defined in one place — the
   contract. Each entry ties a question to the facet that answers it, the evidence

@@ -24,6 +24,11 @@ CI (`.github/workflows/ci.yml`) runs the gate on Python 3.9 / 3.11 / 3.12.
   - `TestDemoReadiness` — every catalog question over a golden host is sound
     (cited), disclosed (gap or evidenced-negative, never silent), and invents
     nothing for a quiet user.
+  - `TestEvidenceConservation` — through the shipped CLI (`main`): a clean host
+    reports 0 silent loss; a truncated wtmp, an undecodable audit line, a bad
+    package timestamp, and a malformed journal line are each **counted and
+    disclosed** rather than dropped; and a >60-event result is capped-but-disclosed
+    in text while `--format json` stays complete.
   - Root attribution incl. the ssh-as-root exception; missing-rule gap
     disclosure; UID reuse; new/never-existed users; auditd-less (auth.log) hosts;
     failed logins (btmp); streaming memory bound; multi-arch; the `--coverage`

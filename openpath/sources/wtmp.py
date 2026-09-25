@@ -69,10 +69,18 @@ class _Record:
         self.raw = raw
 
 
-def parse_utmp_bytes(data: bytes, rel: str) -> List["_Record"]:
-    """Parse raw utmp/wtmp/btmp bytes into records (all share the format)."""
+def parse_utmp_bytes(data: bytes, rel: str) -> Tuple[List["_Record"], int, int]:
+    """Parse raw utmp/wtmp/btmp bytes into records (all share the format).
+
+    Returns ``(records, scanned, leftover_bytes)``. ``scanned`` is the number of
+    complete fixed-size records examined; ``leftover_bytes`` is any trailing
+    fragment that is not a whole record (a truncated/corrupt tail). The caller
+    surfaces a non-zero leftover as a conservation gap so a partial record at the
+    end of a truncated log is never silently discarded by the integer division.
+    """
     records: List[_Record] = []
     n = len(data) // _UTMP_SIZE
+    leftover = len(data) - n * _UTMP_SIZE
     for i in range(n):
         chunk = data[i * _UTMP_SIZE : (i + 1) * _UTMP_SIZE]
         (
@@ -93,15 +101,18 @@ def parse_utmp_bytes(data: bytes, rel: str) -> List["_Record"]:
                f"time={ts.isoformat() if ts else 'none'}")
         records.append(_Record(ut_type, ut_pid, line, _cstr(ut_id), user, host,
                                ts, f"{rel}#{i}", raw))
-    return records
+    return records, n, leftover
 
 
 class WtmpCollector(Collector):
     source_id = "wtmp"
 
-    def _read_records(self, env: Env) -> Tuple[List[_Record], List[str]]:
+    def _read_records(self, env: Env):
         records: List[_Record] = []
         locations: List[str] = []
+        scanned = 0
+        unparseable = 0
+        detail_bits: List[str] = []
         for rel in _WTMP_PATHS:
             p = env.path(rel)
             if not p.exists():
@@ -110,12 +121,21 @@ class WtmpCollector(Collector):
             try:
                 data = p.read_bytes()
             except OSError:
+                # An existing-but-unreadable file is not "no records"; count the
+                # whole file as unaccounted for rather than silently skipping it.
+                unparseable += 1
+                detail_bits.append(f"{rel}: unreadable")
                 continue
-            records.extend(parse_utmp_bytes(data, rel))
-        return records, locations
+            recs, n, leftover = parse_utmp_bytes(data, rel)
+            records.extend(recs)
+            scanned += n
+            if leftover:
+                unparseable += 1
+                detail_bits.append(f"{rel}: {leftover}-byte truncated tail record")
+        return records, locations, scanned, unparseable, "; ".join(detail_bits)
 
     def collect(self, env: Env, window: TimeRange) -> CollectResult:
-        records, locations = self._read_records(env)
+        records, locations, scanned, unparseable, cons_detail = self._read_records(env)
 
         if not locations:
             cov = SourceCoverage(
@@ -138,6 +158,8 @@ class WtmpCollector(Collector):
             cov = SourceCoverage(
                 source_id=self.source_id, status=SourceStatus.EMPTY,
                 detail="wtmp present but contains no records",
+                records_scanned=scanned, unparseable=unparseable,
+                unparseable_detail=cons_detail,
                 locations=locations,
                 instrumentation=[InstrumentationCheck(
                     "wtmp accounting present", False,
@@ -166,6 +188,9 @@ class WtmpCollector(Collector):
             horizon_start=hstart,
             horizon_end=hend,
             record_count=len(records),
+            records_scanned=scanned,
+            unparseable=unparseable,
+            unparseable_detail=cons_detail,
             locations=locations,
             retention_bounded=any("wtmp." in loc for loc in locations),
             instrumentation=[

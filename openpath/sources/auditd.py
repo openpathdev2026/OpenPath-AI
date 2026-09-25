@@ -313,7 +313,8 @@ class AuditdCollector(Collector):
         saw_execve = saw_net = saw_file = False
         count = 0
         hmin = hmax = None
-        for g in self._iter_groups(locs):
+        stats = {"rec_lines": 0, "unparseable": 0}
+        for g in self._iter_groups(locs, stats):
             count += 1
             if hmin is None or g.ts < hmin:
                 hmin = g.ts
@@ -342,6 +343,10 @@ class AuditdCollector(Collector):
             horizon_start=hmin,
             horizon_end=hmax,
             record_count=count,
+            records_scanned=stats["rec_lines"],
+            unparseable=stats["unparseable"],
+            unparseable_detail=("audit record line(s) missing a decodable "
+                                "event id/type" if stats["unparseable"] else ""),
             locations=locations,
             retention_bounded=any("audit.log." in loc for loc in locations),
             instrumentation=self._instrumentation(rules, saw_execve, saw_net, saw_file),
@@ -358,7 +363,7 @@ class AuditdCollector(Collector):
                 out.append((rel, p))
         return out
 
-    def _iter_groups(self, locations):
+    def _iter_groups(self, locations, stats=None):
         """Yield one :class:`_Group` at a time by streaming lines.
 
         auditd writes all records of a single event consecutively (the same
@@ -385,7 +390,14 @@ class AuditdCollector(Collector):
                     m_id = _AUDIT_ID_RE.search(line)
                     m_ty = _TYPE_RE.search(line)
                     if not m_id or not m_ty:
+                        # Looked like an audit record (has type= and audit(...)) but
+                        # its id/type could not be decoded: count it rather than
+                        # dropping it silently.
+                        if stats is not None:
+                            stats["unparseable"] += 1
                         continue
+                    if stats is not None:
+                        stats["rec_lines"] += 1
                     epoch = int(m_id.group(1))
                     usec = int(m_id.group(2))
                     serial = m_id.group(3)
