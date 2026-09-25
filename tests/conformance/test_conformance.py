@@ -1,9 +1,10 @@
 """Product-readiness conformance suite.
 
 This is the baseline the product must never regress below: for *any* user and
-*any* time range, all 13 question families must answer soundly (every claim
-cited) and disclose every gap (never a false "nothing happened"). The scenarios
-below deliberately include the cases that break naive implementations:
+*any* time range, every question in the frozen catalog (`openpath/catalog.py`)
+must answer soundly (every claim cited) and disclose every gap (never a false
+"nothing happened"). The scenarios below deliberately include the cases that
+break naive implementations:
 
     * a brand-new user created *inside* the window,
     * UID reuse across a deleted and a recreated user,
@@ -27,29 +28,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from openpath import router
+from openpath.catalog import CATALOG
 from openpath.engine import Engine
 from openpath.env import Env
 from openpath.model.timerange import TimeRange, build_range
 from openpath.render import render_json, render_text
 from openpath.sources.auditd import AuditdCollector
 from tests.conformance.fixtures import HostBuilder
-
-# The canonical 13 questions, as {user} templates -> expected facet.
-CANONICAL = [
-    ("What did {u} do during the last 24 hours?", "core"),
-    ("Show me everything {u} did chronologically during the last 24 hours.", "timeline"),
-    ("What sessions did {u} have during the last 24 hours?", "sessions"),
-    ("When did {u} log in and where did they connect from?", "login"),
-    ("Did {u} become root during the last 24 hours?", "privilege"),
-    ("What did {u} do as root during the last 24 hours?", "root_activity"),
-    ("What commands did {u} execute during the last 24 hours?", "commands"),
-    ("What files did {u} change during the last 24 hours?", "files"),
-    ("What accounts or groups did {u} change during the last 24 hours?", "accounts"),
-    ("What software did {u} install, remove, or change during the last 24 hours?", "packages"),
-    ("What network activity did {u} perform during the last 24 hours?", "network"),
-    ("What evidence supports what {u} did during the last 24 hours?", "evidence"),
-    ("What could OpenPath not determine about {u} during the last 24 hours?", "gaps"),
-]
 
 NOW = datetime(2026, 9, 25, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -142,10 +127,10 @@ class TestActiveUserAllFamilies(Base):
         self.assertEqual(f.events[0].attrs.get("path"), "/etc/hosts")
 
     def test_accounts_and_groups(self):
-        f = self.finding(self.root, "alice", "accounts")
-        targets = {e.attrs.get("acct") or e.attrs.get("grp") for e in f.events}
-        self.assertIn("deploybot", targets)
-        self.assertIn("deploygrp", targets)
+        accts = {e.attrs.get("acct") for e in self.finding(self.root, "alice", "accounts").events}
+        self.assertIn("deploybot", accts)
+        grps = {e.attrs.get("grp") for e in self.finding(self.root, "alice", "groups").events}
+        self.assertIn("deploygrp", grps)
 
     def test_packages_attributed(self):
         f = self.finding(self.root, "alice", "packages")
@@ -312,7 +297,7 @@ class TestGapDisclosure(Base):
     def test_accounts_work_without_syscall_rules(self):
         f = self.finding(self._host_no_execve(), "alice", "accounts")
         self.assertTrue(any(e.attrs.get("acct") == "svc" for e in f.events))
-        self.assertEqual([g for g in f.gaps if g.question == "Accounts/groups"], [])
+        self.assertEqual([g for g in f.gaps if g.question == "Accounts"], [])
 
     def test_packages_unattributable_without_execve(self):
         f = self.finding(self._host_no_execve(), "alice", "packages")
@@ -351,6 +336,58 @@ class TestGapDisclosure(Base):
         self.assertTrue(any(g.question == "horizon" for g in f.gaps),
                         "a retention-bounded log starting mid-window must disclose "
                         "a horizon gap")
+
+
+class TestRootSessionChain(Base):
+    """Flagship correctness guarantee: when a human SSHes in and `sudo su`s to
+    root, everything they do as root (kernel auid=<human>, uid=0) is attributed
+    to the human -- "What did aclaye do?" includes their root actions."""
+
+    def _host(self) -> Path:
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("aclaye", 1001)
+        h.enable_execve().enable_file_syscalls().watch("/etc", "wa", "etc")
+        h.boot(ago(hours=6))
+        h.auth_ssh_accept("aclaye", "1.2.3.4", ago(hours=3))
+        h.login("aclaye", ago(hours=3), line="pts/0", host="1.2.3.4",
+                until=ago(hours=2, minutes=50))
+        h.sudo(1001, 1001, "/bin/su -", ago(hours=2, minutes=59))
+        # As root, auid stays 1001 -- the kernel still knows it is aclaye.
+        h.exec(1001, 0, ["useradd", "bob"], "/usr/sbin/useradd",
+               ago(hours=2, minutes=58), euid=0, comm="useradd")
+        h.add_user(1001, "bob", 1600, ago(hours=2, minutes=58))
+        h.exec(1001, 0, ["chmod", "600", "/etc/shadow"], "/usr/bin/chmod",
+               ago(hours=2, minutes=57), euid=0, comm="chmod")
+        h.file_change(1001, 0, "chmod", "/etc/shadow", ago(hours=2, minutes=57),
+                      euid=0, key="etc")
+        h.exec(1001, 0, ["vim", "/etc/hosts"], "/usr/bin/vim",
+               ago(hours=2, minutes=56), euid=0, comm="vim")
+        h.file_change(1001, 0, "openat", "/etc/hosts", ago(hours=2, minutes=56),
+                      euid=0, key="etc")
+        h.write()
+        return root
+
+    def test_root_actions_attributed_to_the_human(self):
+        root = self._host()
+        cmds = [e.attrs.get("cmdline") for e in self.finding(root, "aclaye", "commands").events]
+        self.assertIn("useradd bob", cmds)
+        self.assertIn("chmod 600 /etc/shadow", cmds)
+        self.assertIn("vim /etc/hosts", cmds)
+        accts = {e.attrs.get("acct") for e in self.finding(root, "aclaye", "accounts").events}
+        self.assertIn("bob", accts)
+        paths = {e.attrs.get("path") for e in self.finding(root, "aclaye", "files").events}
+        self.assertEqual({"/etc/shadow", "/etc/hosts"}, paths)
+        self.assertTrue(self.finding(root, "aclaye", "privilege").summary.startswith("Yes"))
+
+    def test_narrative_states_the_human_did_it_as_root(self):
+        root = self._host()
+        text = render_text(self.result(root, "aclaye", "timeline"))
+        self.assertIn("aclaye created the account `bob` (uid 1600) as root", text)
+        self.assertIn("aclaye changed permissions on the file `/etc/shadow` as root", text)
+        # mechanical narration -- no speculation
+        for weasel in ("appears", "likely", "probably", "seems", "may have"):
+            self.assertNotIn(weasel, text.lower())
 
 
 class TestRootAttribution(Base):
@@ -450,15 +487,17 @@ class TestNaturalLanguageRouting(Base):
     USERNAMES = ["alice", "deploybot", "svc-01", "j.doe", "root", "u12345"]
 
     def test_all_canonical_questions_route(self):
-        for tmpl, expected_facet in CANONICAL:
+        # The frozen catalog is the contract: every question routes to its facet
+        # and its subject is extracted, for arbitrary usernames.
+        for cq in CATALOG:
             for user in self.USERNAMES:
-                q = tmpl.format(u=user)
+                q = cq.text.format(user=user)
                 self.assertEqual(
-                    router.route(q), expected_facet,
-                    f"routing wrong for {q!r}: expected {expected_facet}")
+                    router.route(q), cq.facet,
+                    f"routing wrong for {cq.id} {q!r}: expected {cq.facet}")
                 self.assertEqual(
                     router.extract_user(q), user,
-                    f"user extraction wrong for {q!r}: expected {user}")
+                    f"user extraction wrong for {cq.id} {q!r}: expected {user}")
 
     def test_time_extraction_variants(self):
         self.assertEqual(router.extract_time("... during the last 24 hours?"),
@@ -827,7 +866,7 @@ class TestReadiness(Base):
         report = self._rd(self.fully_instrumented())
         # all substantive data questions answerable (aggregates not counted)
         self.assertEqual(report.answerable, report.data_total)
-        self.assertEqual(report.data_total, 9)
+        self.assertEqual(report.data_total, 10)
 
     def test_debian_host_blind_on_files_and_network_only(self):
         root = self.make_root()
@@ -842,7 +881,8 @@ class TestReadiness(Base):
         self.assertFalse(by["Network"])
         self.assertTrue(by["Privilege"])
         self.assertTrue(by["Login"])
-        self.assertTrue(by["Accounts/groups"])
+        self.assertTrue(by["Accounts"])
+        self.assertTrue(by["Groups"])
 
     def test_bare_host_only_aggregates_answerable(self):
         root = self.make_root()
@@ -865,6 +905,87 @@ class TestReadiness(Base):
         self.assertTrue(blind)
         # at least one blind family carries an actionable remedy
         self.assertTrue(any(g.remedy for fr in blind for g in fr.gaps))
+
+
+class TestCatalog(Base):
+    """The frozen catalog stays coherent with the code and the docs."""
+
+    def test_every_catalog_facet_exists(self):
+        from openpath.facets import get_facet
+        for cq in CATALOG:
+            get_facet(cq.facet)  # raises KeyError if the facet is unknown
+
+    def test_catalog_doc_lists_every_question(self):
+        doc = Path("docs/CLIENT-QUESTION-CATALOG.md").read_text()
+        for cq in CATALOG:
+            self.assertIn(cq.id, doc, f"{cq.id} missing from the catalog doc")
+
+    def test_ids_are_sequential(self):
+        self.assertEqual([cq.id for cq in CATALOG],
+                         [f"Q{i:02d}" for i in range(1, len(CATALOG) + 1)])
+
+
+class TestDemoReadiness(Base):
+    """The demo contract: every catalog question, over a golden host, answered
+    correctly, backed by cited evidence, disclosing gaps, inventing nothing."""
+
+    def _golden(self) -> Path:
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("aclaye", 1001)
+        h.enable_execve().enable_network().enable_file_syscalls().watch("/etc", "wa", "etc")
+        h.boot(ago(hours=6))
+        h.auth_ssh_accept("aclaye", "1.2.3.4", ago(hours=3))
+        h.login("aclaye", ago(hours=3), line="pts/0", host="1.2.3.4", until=ago(hours=1))
+        h.failed_login("aclaye", ago(hours=3, minutes=2), host="9.9.9.9")
+        h.sudo(1001, 1001, "/bin/su -", ago(hours=2, minutes=59))
+        h.exec(1001, 0, ["useradd", "bob"], "/usr/sbin/useradd", ago(hours=2, minutes=58), euid=0, comm="useradd")
+        h.add_user(1001, "bob", 1600, ago(hours=2, minutes=58))
+        h.exec(1001, 0, ["groupadd", "devs"], "/usr/sbin/groupadd", ago(hours=2, minutes=57), euid=0, comm="groupadd")
+        h.add_group(1001, "devs", 4000, ago(hours=2, minutes=57))
+        h.exec(1001, 0, ["chmod", "600", "/etc/shadow"], "/usr/bin/chmod", ago(hours=2, minutes=56), euid=0, comm="chmod")
+        h.file_change(1001, 0, "chmod", "/etc/shadow", ago(hours=2, minutes=56), euid=0, key="etc")
+        h.exec(1001, 0, ["dnf", "install", "-y", "nginx"], "/usr/bin/dnf", ago(hours=2, minutes=55), euid=0, comm="dnf")
+        h.pkg("Installed", "nginx-1.24.0-1.fc40.x86_64", ago(hours=2, minutes=54))
+        h.connect(1001, 0, "93.184.216.34", 443, ago(hours=2, minutes=53))
+        h.write()
+        return root
+
+    def test_every_catalog_question_is_sound_and_disclosed(self):
+        root = self._golden()
+        for cq in CATALOG:
+            f = self.finding(root, "aclaye", cq.facet)
+            # soundness: every asserted fact carries a citation
+            for e in f.events:
+                self.assertTrue(e.citations, f"{cq.id}: uncited event {e.summary}")
+            # disclosure: a data facet with no events must say why (gap) or state
+            # an evidenced negative -- never a silent blank
+            if cq.facet not in ("core", "timeline", "evidence", "gaps") and not f.events:
+                disclosed = bool(f.gaps) or any(
+                    kw in f.summary.lower()
+                    for kw in ("no ", "cannot determine", "evidenced negative"))
+                self.assertTrue(disclosed, f"{cq.id}: silent empty answer")
+
+    def test_demo_commands_answer_correctly(self):
+        root = self._golden()
+        # the six demo commands, checked for correct, evidenced content
+        self.assertTrue(self.finding(root, "aclaye", "privilege").summary.startswith("Yes"))
+        cmds = [e.attrs.get("cmdline") for e in self.finding(root, "aclaye", "commands").events]
+        self.assertTrue({"useradd bob", "chmod 600 /etc/shadow"} <= set(cmds))
+        files = {e.attrs.get("path") for e in self.finding(root, "aclaye", "files").events}
+        self.assertIn("/etc/shadow", files)
+        self.assertIn("bob", {e.attrs.get("acct") for e in self.finding(root, "aclaye", "accounts").events})
+        self.assertIn("devs", {e.attrs.get("grp") for e in self.finding(root, "aclaye", "groups").events})
+        self.assertTrue(self.finding(root, "aclaye", "evidence").citations())
+        # gaps facet is honest: on this fully-instrumented host, none outstanding
+        self.assertEqual(self.finding(root, "aclaye", "gaps").gaps, [])
+
+    def test_never_invents_for_a_quiet_user(self):
+        # A real account that did nothing must get evidenced negatives, not fiction.
+        root = self._golden()
+        for facet in ("commands", "files", "network", "accounts", "groups"):
+            f = self.finding(root, "root", facet)  # root itself did nothing here
+            self.assertEqual(len(f.events), 0)
 
 
 class TestSerialization(Base):

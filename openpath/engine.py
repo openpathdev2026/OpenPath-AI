@@ -205,7 +205,7 @@ class Engine:
         return results
 
     def readiness(self, env: Env, window: TimeRange) -> ReadinessReport:
-        """Assess, independent of any user, which of the 13 questions this host is
+        """Assess, independent of any user, which catalog questions this host is
         instrumented to answer over the window -- the operator's "am I ready?".
 
         Each family's declared requirements are checked against the coverage

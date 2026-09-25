@@ -1,8 +1,10 @@
-"""Facet registry: the 13 question families.
+"""Facet registry: the question families that implement the catalog.
 
 Each entry ties a stable facet ``name`` to its human family label and the class
-that answers it. The CLI router maps a natural-language question to one of these
-names; the engine instantiates and runs it.
+that answers it. One facet may serve more than one catalog question (e.g.
+``login`` answers both Q02 "when" and Q03 "where"). The CLI router maps a
+natural-language question to one of these names; the engine instantiates and
+runs it.
 """
 
 from __future__ import annotations
@@ -10,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Type
 
-from openpath.facets.accounts import AccountsFacet
+from openpath.facets.accounts import AccountsFacet, GroupsFacet
 from openpath.facets.base import AnalysisContext, Facet
 from openpath.facets.files import FilesFacet
 from openpath.facets.meta import CoreFacet, EvidenceFacet, GapsFacet
@@ -43,11 +45,12 @@ FAMILIES: List[FamilySpec] = [
     FamilySpec(6, "root_activity", "Root activity", RootActivityFacet),
     FamilySpec(7, "commands", "Commands", CommandsFacet),
     FamilySpec(8, "files", "Files", FilesFacet),
-    FamilySpec(9, "accounts", "Accounts/groups", AccountsFacet),
-    FamilySpec(10, "packages", "Packages", PackagesFacet),
-    FamilySpec(11, "network", "Network", NetworkFacet),
-    FamilySpec(12, "evidence", "Evidence", EvidenceFacet),
-    FamilySpec(13, "gaps", "Gaps", GapsFacet),
+    FamilySpec(9, "accounts", "Accounts", AccountsFacet),
+    FamilySpec(10, "groups", "Groups", GroupsFacet),
+    FamilySpec(11, "packages", "Packages", PackagesFacet),
+    FamilySpec(12, "network", "Network", NetworkFacet),
+    FamilySpec(13, "evidence", "Evidence", EvidenceFacet),
+    FamilySpec(14, "gaps", "Gaps", GapsFacet),
 ]
 
 _BY_NAME: Dict[str, FamilySpec] = {spec.name: spec for spec in FAMILIES}

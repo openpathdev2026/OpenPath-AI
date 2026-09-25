@@ -1,11 +1,14 @@
-"""Accounts / groups (family 9): what accounts or groups did the user change?
+"""Accounts (family 9) and Groups (family 10): what accounts/groups did the user
+create or modify?
 
-Note the attribution direction: for an ADD_USER/DEL_USER/GRP_MGMT record, the
-subject is the *actor* (identified by ``auid``), while ``attrs['acct']`` /
-``attrs['grp']`` is the *target* account/group being changed. ``Subject.matches``
-keys on ``auid`` for these records, so we correctly find the administrator, not
-the account they touched.
+Attribution direction: for an ADD_USER/DEL_USER/GRP_MGMT record the subject is the
+*actor* (identified by ``auid``), while the acct/grp is the *target*. On hosts
+where the change record carries no actor (syslog useradd lines), attribution also
+comes from the subject's own execution of an account/group admin tool (e.g. sudo
+useradd), captured via auth.log or an audited execve.
 """
+
+from __future__ import annotations
 
 import os
 
@@ -13,73 +16,102 @@ from openpath.facets.base import AnalysisContext, AnyOf, Facet, prefer_primary
 from openpath.model.event import EventType
 from openpath.model.finding import Finding
 
-# Command basenames that administer accounts/groups. When a subject runs one of
-# these (via sudo, captured in auth.log, or via an audited execve), it attributes
-# the account change to them -- important on hosts where the account-change record
-# itself carries no actor (syslog useradd lines).
-_ADMIN_TOOLS = {
+_ACCOUNT_TOOLS = {
     "useradd", "userdel", "usermod", "adduser", "deluser",
-    "groupadd", "groupdel", "groupmod", "addgroup", "delgroup",
-    "gpasswd", "passwd", "chage", "chpasswd", "newusers", "vipw", "vigr",
+    "passwd", "chage", "chpasswd", "newusers", "vipw",
 }
+_GROUP_TOOLS = {
+    "groupadd", "groupdel", "groupmod", "addgroup", "delgroup", "gpasswd", "vigr",
+}
+_ANYOF = AnyOf(
+    "identity",
+    [("auditd", "auditd rules loaded"), ("auth", None)],
+    remedy="run auditd (load contrib/openpath.rules) or ensure /var/log/auth.log "
+           "(or /var/log/secure) is present",
+)
+
+
+def _admin_execs(ctx: AnalysisContext, tools):
+    execs = [
+        e for e in ctx.subject_events([EventType.EXEC])
+        if os.path.basename(e.attrs.get("exe") or "") in tools
+        or (e.attrs.get("comm") in tools)
+        or (e.attrs.get("argv") and os.path.basename(e.attrs["argv"][0]) in tools)
+    ]
+    return prefer_primary(ctx, execs, need_execve=True)
 
 
 class AccountsFacet(Facet):
     name = "accounts"
-    question_family = "Accounts/groups"
-    # Account/group changes are recorded by auditd (ADD_USER/DEL_USER/GRP_MGMT,
-    # emitted whenever auditd runs) or by syslog (useradd/groupadd lines).
-    requirements = (
-        AnyOf("Accounts/groups",
-              [("auditd", "auditd rules loaded"), ("auth", None)],
-              remedy="run auditd (load contrib/openpath.rules) or ensure "
-                     "/var/log/auth.log (or /var/log/secure) is present"),
-    )
+    question_family = "Accounts"
+    requirements = (AnyOf("Accounts", _ANYOF.options, remedy=_ANYOF.remedy),)
 
     def analyze(self, ctx: AnalysisContext) -> Finding:
         f = self._new_finding(ctx)
         f.gaps.extend(self._prereq_gaps(ctx))
 
-        changes = ctx.subject_events([EventType.ACCOUNT_CHANGE, EventType.GROUP_CHANGE])
-        # Syslog account-change lines carry no actor, so also attribute via the
-        # subject's own execution of an account-admin tool (e.g. sudo useradd).
-        admin_execs = [
-            e for e in ctx.subject_events([EventType.EXEC])
-            if os.path.basename(e.attrs.get("exe") or "") in _ADMIN_TOOLS
-            or (e.attrs.get("comm") in _ADMIN_TOOLS)
-            or (e.attrs.get("argv") and os.path.basename(e.attrs["argv"][0]) in _ADMIN_TOOLS)
-        ]
-        # Drop the auth.log copy of an admin command auditd also recorded.
-        admin_execs = prefer_primary(ctx, admin_execs, need_execve=True)
-        changes = sorted(changes + admin_execs, key=lambda e: e.ts)
-        f.events = changes
+        changes = ctx.subject_events([EventType.ACCOUNT_CHANGE])
+        admin = _admin_execs(ctx, _ACCOUNT_TOOLS)
+        events = sorted(changes + admin, key=lambda e: e.ts)
+        f.events = events
 
-        if not changes:
-            if any(g.question == "Accounts/groups" for g in f.gaps):
-                f.summary = (
-                    f"Cannot determine account/group changes by {ctx.subject.username} (see gaps)."
-                )
+        if not events:
+            if any(g.question == "Accounts" for g in f.gaps):
+                f.summary = f"Cannot determine account changes by {ctx.subject.username} (see gaps)."
             else:
-                f.summary = (
-                    f"{ctx.subject.username} made no account or group changes in "
-                    f"{ctx.window.label or 'the window'} (evidenced negative)."
-                )
+                f.summary = (f"{ctx.subject.username} made no account changes in "
+                             f"{ctx.window.label or 'the window'} (evidenced negative).")
             return f
 
-        acct = [e for e in changes if e.type == EventType.ACCOUNT_CHANGE]
-        grp = [e for e in changes if e.type == EventType.GROUP_CHANGE]
-        admin = [e for e in changes if e.type == EventType.EXEC]
-        parts = [f"{len(acct)} account change(s)", f"{len(grp)} group change(s)"]
-        if admin:
-            parts.append(f"{len(admin)} account-admin command(s)")
+        n_change = sum(1 for e in events if e.type == EventType.ACCOUNT_CHANGE)
+        parts = [f"{n_change} account change(s)"]
+        n_admin = len(events) - n_change
+        if n_admin:
+            parts.append(f"{n_admin} account-admin command(s)")
         f.summary = f"{ctx.subject.username} made " + ", ".join(parts) + "."
-        for e in changes:
+        for e in events:
             if e.type == EventType.EXEC:
                 f.notes.append(f"{e.ts.isoformat()} ran {e.attrs.get('cmdline')}")
             else:
-                target = (e.attrs.get("acct") or e.attrs.get("grp")
-                          or f"id={e.attrs.get('id')}")
-                f.notes.append(
-                    f"{e.ts.isoformat()} {e.attrs.get('action')} {target} "
-                    f"({e.attrs.get('res', 'n/a')})")
+                target = e.attrs.get("acct") or f"id={e.attrs.get('id')}"
+                f.notes.append(f"{e.ts.isoformat()} {e.attrs.get('action')} {target} "
+                               f"({e.attrs.get('res', 'n/a')})")
+        return f
+
+
+class GroupsFacet(Facet):
+    name = "groups"
+    question_family = "Groups"
+    requirements = (AnyOf("Groups", _ANYOF.options, remedy=_ANYOF.remedy),)
+
+    def analyze(self, ctx: AnalysisContext) -> Finding:
+        f = self._new_finding(ctx)
+        f.gaps.extend(self._prereq_gaps(ctx))
+
+        changes = ctx.subject_events([EventType.GROUP_CHANGE])
+        admin = _admin_execs(ctx, _GROUP_TOOLS)
+        events = sorted(changes + admin, key=lambda e: e.ts)
+        f.events = events
+
+        if not events:
+            if any(g.question == "Groups" for g in f.gaps):
+                f.summary = f"Cannot determine group changes by {ctx.subject.username} (see gaps)."
+            else:
+                f.summary = (f"{ctx.subject.username} made no group changes in "
+                             f"{ctx.window.label or 'the window'} (evidenced negative).")
+            return f
+
+        n_change = sum(1 for e in events if e.type == EventType.GROUP_CHANGE)
+        parts = [f"{n_change} group change(s)"]
+        n_admin = len(events) - n_change
+        if n_admin:
+            parts.append(f"{n_admin} group-admin command(s)")
+        f.summary = f"{ctx.subject.username} made " + ", ".join(parts) + "."
+        for e in events:
+            if e.type == EventType.EXEC:
+                f.notes.append(f"{e.ts.isoformat()} ran {e.attrs.get('cmdline')}")
+            else:
+                target = e.attrs.get("grp") or f"id={e.attrs.get('id')}"
+                f.notes.append(f"{e.ts.isoformat()} {e.attrs.get('action')} {target} "
+                               f"({e.attrs.get('res', 'n/a')})")
         return f

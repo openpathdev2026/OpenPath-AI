@@ -2,7 +2,9 @@
 
 ## The contract
 
-OpenPath answers 13 fixed questions about Linux user activity under two invariants:
+OpenPath answers a frozen catalog of questions (`openpath/catalog.py`, rendered in
+[CLIENT-QUESTION-CATALOG.md](CLIENT-QUESTION-CATALOG.md)) about Linux user activity
+under two invariants:
 
 1. **Soundness** — every asserted fact carries a `Citation` to a raw source
    record. If a fact cannot be cited, it is not asserted.

@@ -2,17 +2,24 @@
 
 Evidence-first forensic Q&A over Linux user activity.
 
-Ask 13 fixed questions about **any** user over **any** time range and get an answer
-that is either **backed by cited raw evidence** or **explicitly disclosed as a gap** —
-never a silent, misleading "nothing happened".
+Answer a **frozen catalog** of client questions ([15 questions,
+`docs/CLIENT-QUESTION-CATALOG.md`](docs/CLIENT-QUESTION-CATALOG.md)) about **any**
+user over **any** time range, where every answer is either **backed by cited raw
+evidence** or **explicitly disclosed as a gap** — never a silent, misleading
+"nothing happened". The catalog *is* the contract; OpenPath is an evidence
+narrator, not a general-purpose log search.
 
 ```
 openpath-ai "What did alice do during the last 24 hours?"
 openpath-ai "Did deploybot become root during the last 24 hours?"
 openpath-ai --user j.doe --window "last 7 days" "what files did j.doe change?"
+openpath-ai --catalog     # print the frozen question catalog (the contract)
 ```
 
-**Docs:** [Architecture](docs/ARCHITECTURE.md) · [Deployment](docs/DEPLOYMENT.md) · [Changelog](CHANGELOG.md)
+**Docs:** [Question catalog](docs/CLIENT-QUESTION-CATALOG.md) ·
+[Evidence sources](docs/EVIDENCE-SOURCES.md) ·
+[Architecture](docs/ARCHITECTURE.md) · [Limitations](docs/LIMITATIONS.md) ·
+[Testing](docs/TESTING.md) · [Changelog](CHANGELOG.md)
 
 Activity is narrated in flowing sentences that name the **object each action was
 performed against**, and every claim is tied to the raw record behind it:
@@ -48,29 +55,65 @@ something stronger and actually achievable:
   and a remedy (question family **13 · Gaps**), never returned as an empty result
   that implies "the user did nothing".
 
-Under those two invariants the 13-question demo becomes a **product-readiness
+Under those two invariants the question catalog becomes a **product-readiness
 baseline**: for any user and any window, every answer is true and cited, and every
 limit is stated.
 
-## The 13 question families
+## The frozen question catalog
 
-| #  | Family          | Primary evidence                                   |
-|----|-----------------|----------------------------------------------------|
-| 1  | Core            | all facets federated                               |
-| 2  | Timeline        | time-ordered, federated factset                    |
-| 3  | Sessions        | wtmp                                               |
-| 4  | Login           | wtmp + sshd journal + btmp (failed attempts)       |
-| 5  | Privilege       | auditd USER_CMD / USER_START                       |
-| 6  | Root activity   | auditd SYSCALL+EXECVE (uid/euid 0)                 |
-| 7  | Commands        | auditd EXECVE (user / switched / root)             |
-| 8  | Files           | auditd file watches / write syscalls               |
-| 9  | Accounts/groups | ADD/DEL_USER, ADD/DEL_GROUP, USER_CHAUTHTOK        |
-| 10 | Packages        | dnf.rpm.log / dpkg.log ⟂ audited pkg-manager exec  |
-| 11 | Network         | auditd connect/bind + SOCKADDR                     |
-| 12 | Evidence        | every claim's source record                        |
-| 13 | Gaps            | coverage ledger + blind spots + retention horizons |
+The contract is [`docs/CLIENT-QUESTION-CATALOG.md`](docs/CLIENT-QUESTION-CATALOG.md),
+generated from `openpath/catalog.py` (the single source of truth). Fifteen
+questions, each mapped to the facet that answers it and the evidence it cites:
 
-`openpath-ai --list-families` prints them.
+| Q   | Question (about any {user})               | Facet          | Primary evidence                          |
+|-----|-------------------------------------------|----------------|-------------------------------------------|
+| Q01 | What did {user} do in the last 24h?       | core           | all facets federated                      |
+| Q02 | When did {user} log in?                   | login          | wtmp + sshd journal + auth.log            |
+| Q03 | Where did {user} log in from?             | login          | wtmp + journal + auth + btmp (failed)     |
+| Q04 | What sessions did {user} have?            | sessions       | wtmp                                      |
+| Q05 | Did {user} become root?                   | privilege      | auditd USER_CMD/USER_START + auth (sudo)  |
+| Q06 | What did {user} do as root?               | root_activity  | auditd SYSCALL+EXECVE (auid) + auth       |
+| Q07 | What commands did {user} run?             | commands       | auditd EXECVE + auth (sudo)               |
+| Q08 | What files did {user} modify?             | files          | auditd file watch / write syscall         |
+| Q09 | What accounts did {user} create/modify?   | accounts       | auditd ADD/DEL_USER + auth                |
+| Q10 | What groups did {user} create/modify?     | groups         | auditd ADD/DEL_GROUP + auth               |
+| Q11 | What packages did {user} install/remove?  | packages       | dnf.rpm.log / dpkg.log ⟂ audited exec     |
+| Q12 | What network activity did {user} do?      | network        | auditd connect/bind + SOCKADDR            |
+| Q13 | What did {user} do before/after an event? | timeline       | all facets, pivoted with `--around`       |
+| Q14 | What evidence supports what {user} did?   | evidence       | every claim's source record               |
+| Q15 | What could OpenPath not determine?        | gaps           | coverage ledger + blind spots + horizons  |
+
+`openpath-ai --catalog` prints the questions; `--list-families` prints the facet
+families that implement them.
+
+## Install & instrument
+
+Pure Python stdlib, no runtime dependencies, Python 3.9+.
+
+```
+python3 -m pip install -e .        # provides the `openpath-ai` command
+python3 -m openpath --list-families # or run without installing
+```
+
+Sessions/Login work from wtmp + the sshd journal with no setup. To answer the
+auditd-backed questions (Commands, Root activity, Files, Network, per-user Package
+attribution) load the recommended rules once:
+
+```
+sudo cp contrib/openpath.rules /etc/audit/rules.d/openpath.rules
+sudo augenrules --load && sudo auditctl -l
+```
+
+Then check what a host is actually instrumented to answer — no subject required:
+
+```
+openpath-ai --coverage                 # each question: answerable or blind, with remedy
+openpath-ai --coverage --format json   # for fleet inventory / automation
+```
+
+Skipping the rules is a supported degraded mode: OpenPath **discloses** the missing
+instrumentation as gaps (with the exact rule to add) rather than returning false
+negatives.
 
 ### Works with or without auditd
 
@@ -187,13 +230,15 @@ on-disk formats** (including a user created inside the window, UID reuse, a
 never-existed user, hosts missing audit rules, a rotated log, direct-root-login
 attribution, a large streamed audit log, and the multi-user sweep) and asserts the
 answers exactly — including the negative and "cannot determine" cases. That suite
-is the readiness gate: if it is green, the 13 questions hold for arbitrary users
-and windows.
+is the readiness gate: if it is green, the catalog holds for arbitrary users
+and windows. `TestDemoReadiness` asserts every catalog question over a golden host
+is correct, cited, and gap-disclosing; `TestRootSessionChain` locks the `sudo su`
+→ root-attributed-to-human story.
 
 A **live** suite (`tests/live/`) runs against the real host (`--data-root /`) and
 validates whatever sources exist, always enforcing that every claim is cited. For
 a fully-instrumented auditd host, `scripts/live_conformance.sh` (root, real VM)
-loads the rules, drives known activity, and checks the 13 answers end to end.
+loads the rules, drives known activity, and checks the answers end to end.
 `scripts/collect_bundle.sh` snapshots a host into an offline evidence bundle.
 Large `audit.log` files are streamed, so memory stays bounded regardless of size.
 
@@ -226,5 +271,6 @@ tests/
   live/       # live checks against the real host filesystem
 scripts/      # collect_bundle.sh, live_conformance.sh
 contrib/      # openpath.rules (recommended auditd rules)
-docs/         # ARCHITECTURE.md, DEPLOYMENT.md
+docs/         # CLIENT-QUESTION-CATALOG, EVIDENCE-SOURCES, ARCHITECTURE,
+              # LIMITATIONS, TESTING (+ CHANGELOG at repo root)
 ```

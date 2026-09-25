@@ -6,8 +6,27 @@ based on Keep a Changelog; dates are UTC.
 ## [Unreleased]
 
 ### Added
+- **Frozen question catalog (`openpath/catalog.py`, `--catalog`).** The 15 client
+  questions OpenPath promises to answer are now defined in one place — the
+  contract. Each entry ties a question to the facet that answers it, the evidence
+  it cites, and a `certified` flag. The routing tests, the demo, and
+  `docs/CLIENT-QUESTION-CATALOG.md` / `docs/EVIDENCE-SOURCES.md` all derive from
+  it. `openpath-ai --catalog` prints it. A conformance test (`TestCatalog`) keeps
+  the catalog, the facets, and the doc in sync.
+- **Accounts and Groups are now separate questions/facets.** What was one
+  "Accounts/groups" family is split into **Q09 accounts** (ADD/DEL_USER,
+  USER_CHAUTHTOK, account-admin execs) and **Q10 groups** (ADD/DEL_GROUP,
+  group-admin execs), each independently answerable and disclosed.
+- **Before/after-an-event pivot (Q13, `--around`).** `openpath-ai --around
+  <timestamp> --user <u>` renders the federated timeline for ±1h around an
+  incident, for "what did the user do before and after EVENT".
+- **Demo-readiness gate (`TestDemoReadiness`).** Over a golden host, asserts every
+  catalog question is correct, cited, and gap-disclosing, that the demo commands
+  behave, and that a quiet user yields an evidenced negative — never invented
+  activity. `TestRootSessionChain` locks the `sudo su` → root-attributed-to-human
+  story with no speculative language.
 - **Host readiness self-check (`--coverage`).** Reports, independent of any user,
-  which of the 13 questions the host is instrumented to answer over the window,
+  which of the catalog questions the host is instrumented to answer over the window,
   which are blind, and the exact remedy for each gap, plus every source's status
   and retention horizon. Text and JSON. Turns the "readiness baseline" idea into a
   runtime operator tool.
@@ -37,6 +56,13 @@ based on Keep a Changelog; dates are UTC.
   `evidence`.
 
 ### Changed
+- **Codebase and narration organized around the catalog.** Narration states
+  mechanical facts only — no "appears to"/"likely"/speculation — naming the object
+  each action was performed against.
+- **Docs curated to the catalog set**: `CLIENT-QUESTION-CATALOG.md`,
+  `EVIDENCE-SOURCES.md`, `ARCHITECTURE.md`, `LIMITATIONS.md`, `TESTING.md`, and this
+  `CHANGELOG.md`. `docs/DEPLOYMENT.md` was removed and its operational essentials
+  (install, load audit rules, `--coverage`) folded into the README.
 - sshd-journal citations use a relative locator (no absolute bundle path leaked).
 - Streamed package-log reads with incremental horizon/count (bounded memory);
   audit event groups are carried across rotation boundaries so a split event is

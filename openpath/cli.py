@@ -18,7 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime, timezone, tzinfo
+from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 from typing import Optional
 
@@ -58,6 +58,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--window", "-w", help="time expression, e.g. 'last 24 hours'")
     p.add_argument("--since", help="range start (any timestamp)")
     p.add_argument("--until", help="range end (any timestamp)")
+    p.add_argument("--around", help="pivot timestamp for 'what happened "
+                                    "before/after EVENT' (Q13); shows +/-1h around it")
     p.add_argument("--data-root", default="/",
                    help="filesystem root for sources (default '/'; use an evidence "
                         "bundle dir for offline analysis)")
@@ -67,20 +69,30 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--verbose", "-v", action="store_true",
                    help="show all raw evidence records inline")
     p.add_argument("--list-families", action="store_true",
-                   help="list the 13 question families and exit")
+                   help="list the facet families and exit")
+    p.add_argument("--catalog", action="store_true",
+                   help="print the frozen client question catalog (the contract) "
+                        "and exit")
     p.add_argument("--all-users", action="store_true",
                    help="run the facet (default: core) for EVERY discovered user "
                         "(local accounts + anyone seen in the evidence)")
     p.add_argument("--include-inactive", action="store_true",
                    help="with --all-users, also show users with no recorded activity")
     p.add_argument("--coverage", action="store_true",
-                   help="report which of the 13 questions this host can answer "
+                   help="report which catalog questions this host can answer "
                         "(no subject needed) and exit")
     p.add_argument("--version", action="version", version=f"openpath-ai {__version__}")
     return p
 
 
 def _resolve_window(args, env):
+    # Q13: pivot window centered on an event ("before/after EVENT").
+    if args.around:
+        pivot = parse_instant(args.around, env.local_tz)
+        from openpath.model.timerange import TimeRange
+        return TimeRange(start=pivot - timedelta(hours=1),
+                         end=pivot + timedelta(hours=1),
+                         label=f"around {args.around}")
     window_expr = args.window or (
         router.extract_time(args.question) if args.question else None)
     return build_range(
@@ -97,8 +109,14 @@ def main(argv: Optional[list] = None) -> int:
             print(f"{spec.number:2d}  {spec.name:14s} {spec.label}")
         return 0
 
+    if args.catalog:
+        from openpath.catalog import CATALOG
+        for cq in CATALOG:
+            print(f"{cq.id}  [{cq.facet:13s}] {cq.text.replace('{user}', 'USER')}")
+        return 0
+
     if (not args.coverage and not args.all_users and not args.question
-            and not (args.facet and args.user)):
+            and not (args.facet and args.user) and not (args.around and args.user)):
         print("error: provide a question, or both --facet and --user, "
               "or --all-users, or --coverage", file=sys.stderr)
         return 2
@@ -110,7 +128,7 @@ def main(argv: Optional[list] = None) -> int:
     )
     env = Env(data_root=Path(args.data_root), now=now, local_tz=tz)
 
-    # Host readiness: which of the 13 questions can this host answer?
+    # Host readiness: which catalog questions can this host answer?
     if args.coverage:
         try:
             window = _resolve_window(args, env)
@@ -150,7 +168,11 @@ def main(argv: Optional[list] = None) -> int:
         return 2
 
     # Facet.
-    facet_name = args.facet or (router.route(args.question) if args.question else "core")
+    facet_name = (
+        args.facet
+        or ("timeline" if args.around else None)
+        or (router.route(args.question) if args.question else "core")
+    )
     try:
         get_spec(facet_name)
     except KeyError:

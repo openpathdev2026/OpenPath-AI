@@ -3,8 +3,8 @@
 #
 # This is the complement to the synthetic conformance suite: it loads the
 # recommended audit rules, performs a known sequence of real actions as a test
-# user, then runs OpenPath-AI against the live host and checks that each of the
-# 13 questions reports the activity with evidence -- and attributes root actions
+# user, then runs OpenPath-AI against the live host and checks that the catalog
+# questions report the activity with evidence -- and attributes root actions
 # to the base user who escalated.
 #
 # REQUIREMENTS: root, a running auditd, and a real (non-container) host or VM

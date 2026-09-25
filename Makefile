@@ -18,6 +18,7 @@ live:
 install:
 	python3 -m pip install -e .
 
-# Print the 13 question families.
+# Print the frozen question catalog and the facet families that implement it.
 demo:
+	python3 -m openpath --catalog
 	python3 -m openpath --list-families

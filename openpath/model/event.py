@@ -25,9 +25,7 @@ class EventType(enum.Enum):
 
     # Sessions / login (wtmp, journal)
     BOOT = "boot"
-    SHUTDOWN = "shutdown"
     LOGIN = "login"
-    LOGOUT = "logout"
     SESSION = "session"          # a login..logout interval (derived)
     SSH_AUTH = "ssh_auth"        # sshd authentication event (journal)
 

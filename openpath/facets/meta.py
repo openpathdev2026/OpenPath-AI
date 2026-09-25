@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import List
 
-from openpath.facets.accounts import AccountsFacet
+from openpath.facets.accounts import AccountsFacet, GroupsFacet
 from openpath.facets.attribution import (
     attribute_root_actions,
     summarize_responsibility,
@@ -39,6 +39,7 @@ def _base_facets() -> List[Facet]:
         CommandsFacet(),
         FilesFacet(),
         AccountsFacet(),
+        GroupsFacet(),
         PackagesFacet(),
         NetworkFacet(),
     ]
