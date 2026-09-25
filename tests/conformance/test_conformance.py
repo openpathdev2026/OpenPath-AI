@@ -1160,6 +1160,21 @@ class TestFederatedEvidence(Base):
         self.assertIs(f.confidence, self._C.PARTIAL)
         self.assertTrue(any(g.question == "Packages" for g in f.gaps))
 
+    def test_root_activity_execve_only_is_partial(self):
+        """Catalog-build review (Q06): 'what did {user} do as root' must not be
+        CERTIFIED when only command auditing is on -- root file/network actions
+        would be silently unseen. Requires execve + file + network to certify."""
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.enable_execve()  # execve only; no file/network rules
+        h.sudo(1001, 1001, "/usr/bin/vi /etc/hosts", ago(hours=2))
+        h.exec(1001, 0, ["vi", "/etc/hosts"], "/usr/bin/vi", ago(hours=2), euid=0)
+        h.write()
+        f = self.finding(root, "alice", "root_activity")
+        self.assertIs(f.confidence, self._C.PARTIAL)
+        self.assertTrue(any(g.question == "Root activity" for g in f.gaps))
+
     def test_wtmp_only_direct_root_login_is_not_unanswerable(self):
         """The invariant: a determined, cited finding is never UNANSWERABLE, even
         though Q05's certified sources (auditd/auth) are both absent."""

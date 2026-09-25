@@ -168,6 +168,26 @@ class RootActivityFacet(Facet):
     def analyze(self, ctx: AnalysisContext) -> Finding:
         f = self._new_finding(ctx)
         f.gaps.extend(self._prereq_gaps(ctx))
+
+        # "What did X do as root" spans commands + files + network done as root.
+        # If auditd records commands but not file and/or network changes, root
+        # activity of those kinds is unrecorded -- disclose it so the answer is
+        # scope-limited (PARTIAL), never a false "full extent as root".
+        if source_met(ctx, "auditd", "execve audit rule"):
+            missing = []
+            if not source_met(ctx, "auditd", "host-wide file-change rule"):
+                missing.append("file modifications (no host-wide file-change rule)")
+            if not (source_met(ctx, "auditd", "connect audit rule")
+                    and source_met(ctx, "auditd", "bind audit rule")):
+                missing.append("network activity (connect/bind auditing incomplete)")
+            if missing:
+                f.gaps.append(Gap(
+                    "Root activity",
+                    "command execution as root is recorded, but "
+                    + " and ".join(missing) + " performed as root are not, so the "
+                    "full extent of root activity is scope-limited.",
+                    "auditd", _EXEC_REMEDY))
+
         subject_is_root = _subject_is_root(ctx)
 
         if subject_is_root:
