@@ -164,7 +164,13 @@ class TestActiveUserAllFamilies(Base):
 
     def test_gaps_none_when_fully_instrumented(self):
         f = self.finding(self.root, "alice", "gaps")
-        self.assertEqual(f.gaps, [], f"unexpected gaps: {[g.reason for g in f.gaps]}")
+        # No *coverage* gaps on a fully instrumented host...
+        coverage_gaps = [g for g in f.gaps if g.question != "scope"]
+        self.assertEqual(coverage_gaps, [],
+                         f"unexpected coverage gaps: {[g.reason for g in coverage_gaps]}")
+        # ...but the standing unmodeled-source disclosures are always present, so
+        # Gaps never implies the six modeled sources are the whole picture.
+        self.assertTrue(any(g.question == "scope" for g in f.gaps))
 
     def test_core_overview(self):
         f = self.finding(self.root, "alice", "core")
@@ -1010,6 +1016,174 @@ class TestEvidenceConservation(Base):
         self.assertIsNone(data["narrative_overflow"])
 
 
+class TestFederatedEvidence(Base):
+    """The resilience property: still answer (and say what was lost) when a source
+    disappears; and the confidence label never contradicts the finding."""
+
+    from openpath.model.evidence_matrix import Confidence as _C
+
+    # -- fixtures -- #
+    def _full(self):
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.enable_execve().enable_network().enable_file_syscalls().watch("/etc", "wa", "etc")
+        h.boot(ago(hours=20))
+        h.ssh_accept("alice", "203.0.113.7", ago(hours=3, minutes=1))
+        h.login("alice", ago(hours=3), host="203.0.113.7", until=ago(hours=1))
+        h.sudo(1001, 1001, "/usr/bin/dnf install -y nginx", ago(hours=2))
+        h.exec(1001, 0, ["dnf", "install", "nginx"], "/usr/bin/dnf", ago(hours=2), euid=0)
+        h.connect(1001, 0, "10.0.0.9", 443, ago(hours=2))
+        h.bind(1001, 0, "0.0.0.0", 80, ago(hours=2))
+        h.file_change(1001, 0, "chmod", "/etc/shadow", ago(hours=2), key="etc")
+        h.pkg("Installed", "nginx-1.24.0-1.fc40.x86_64", ago(hours=2))
+        h.add_user(1001, "bob", 1600, ago(hours=2))
+        h.write()
+        return root
+
+    def _conf(self, root, user, facet):
+        return self.finding(root, user, facet).confidence
+
+    def test_full_host_all_certified(self):
+        root = self._full()
+        for facet in ["login", "sessions", "privilege", "commands", "files",
+                      "network", "accounts", "groups", "packages", "core"]:
+            self.assertIs(self._conf(root, "alice", facet), self._C.CERTIFIED, facet)
+
+    def test_dropping_wtmp_keeps_login_certified_and_core_certified(self):
+        """The motivating case: wtmp is supporting, not primary, for login/core."""
+        root = self._full()
+        (root / "var/log/wtmp").unlink()
+        self.assertIs(self._conf(root, "alice", "login"), self._C.CERTIFIED)
+        # Sessions is genuinely wtmp-only (interval durations) -> unanswerable.
+        self.assertIs(self._conf(root, "alice", "sessions"), self._C.UNANSWERABLE)
+        # ...but the overview still stands, and names the blind slice.
+        core = self.finding(root, "alice", "core")
+        self.assertIs(core.confidence, self._C.CERTIFIED)
+        self.assertIn("Sessions", core.confidence_note)
+
+    def test_auth_only_host_degrades_but_still_answers(self):
+        root = self.make_root()
+        h = HostBuilder(root).no_auditd()
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.boot(ago(hours=20))
+        h.login("alice", ago(hours=3), host="10.0.0.5", until=ago(hours=1))
+        h.auth_ssh_accept("alice", "10.0.0.5", ago(hours=3))
+        h.auth_sudo("alice", "/usr/bin/systemctl restart nginx", ago(hours=2))
+        h.auth_useradd("bob", 1600, ago(hours=2))
+        h.write()
+        self.assertIs(self._conf(root, "alice", "login"), self._C.CERTIFIED)
+        # Privilege: the sudo/su escalation is a certified fact, but without auditd
+        # the full extent of root activity (and non-PAM privilege gains) can't be
+        # confirmed -- the facet discloses that, so the honest label is PARTIAL.
+        self.assertIs(self._conf(root, "alice", "privilege"), self._C.PARTIAL)
+        self.assertIs(self._conf(root, "alice", "commands"), self._C.PARTIAL)
+        self.assertIs(self._conf(root, "alice", "root_activity"), self._C.PARTIAL)
+        self.assertIs(self._conf(root, "alice", "accounts"), self._C.PARTIAL)
+        self.assertIs(self._conf(root, "alice", "files"), self._C.UNANSWERABLE)
+        self.assertIs(self._conf(root, "alice", "network"), self._C.UNANSWERABLE)
+        self.assertIs(self._conf(root, "alice", "core"), self._C.CERTIFIED)
+
+    def test_narrow_watch_downgrades_files_to_partial(self):
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.enable_execve().watch("/etc", "wa", "etc")  # NO write-syscall rule
+        h.file_change(1001, 0, "chmod", "/etc/shadow", ago(hours=2), key="etc")
+        h.write()
+        self.assertIs(self._conf(root, "alice", "files"), self._C.PARTIAL)
+
+    def test_connect_only_downgrades_network_to_partial(self):
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h._rules.append("-a always,exit -F arch=b64 -S connect -k net")  # no bind
+        h.connect(1001, 0, "10.0.0.9", 443, ago(hours=2))
+        h.write()
+        self.assertIs(self._conf(root, "alice", "network"), self._C.PARTIAL)
+
+    def test_wtmp_only_direct_root_login_is_not_unanswerable(self):
+        """The invariant: a determined, cited finding is never UNANSWERABLE, even
+        though Q05's certified sources (auditd/auth) are both absent."""
+        root = self.make_root()
+        h = HostBuilder(root).no_auditd()
+        h.passwd("root", 0)
+        h.boot(ago(hours=20))
+        h.login("root", ago(hours=3), host="198.51.100.5", until=ago(hours=1))
+        h.write()
+        f = self.finding(root, "root", "privilege")
+        self.assertTrue(f.events)  # the direct root login is visible in wtmp
+        self.assertIsNot(f.confidence, self._C.UNANSWERABLE)
+
+
+class TestConfidenceInvariants(Base):
+    """Cross-checks that the confidence label agrees with the finding it labels."""
+
+    from openpath.model.evidence_matrix import Confidence as _C
+
+    def _hosts(self):
+        # A spread of instrumentation states.
+        full = TestFederatedEvidence._full(self)
+        auth = self.make_root()
+        h = HostBuilder(auth).no_auditd()
+        h.passwd("root", 0).passwd("alice", 1001).boot(ago(hours=20))
+        h.login("alice", ago(hours=3), host="10.0.0.5", until=ago(hours=1))
+        h.auth_sudo("alice", "/bin/systemctl restart x", ago(hours=2))
+        h.write()
+        bare = self.make_root()
+        HostBuilder(bare).passwd("root", 0).passwd("alice", 1001).write()
+        return [full, auth, bare]
+
+    def test_label_never_contradicts_finding(self):
+        facets = ["login", "sessions", "privilege", "commands", "files", "network",
+                  "accounts", "groups", "packages", "core", "timeline",
+                  "evidence", "gaps"]
+        for root in self._hosts():
+            for user in ("alice", "root"):
+                for facet in facets:
+                    f = self.finding(root, user, facet)
+                    self.assertIsNotNone(f.confidence, f"{facet}: no confidence set")
+                    # (a) determined, cited events => never UNANSWERABLE.
+                    if f.events and f.citations():
+                        self.assertIsNot(
+                            f.confidence, self._C.UNANSWERABLE,
+                            f"{facet}/{user}: cited events but UNANSWERABLE")
+                    # (b) UNANSWERABLE must carry a blocking gap and assert nothing.
+                    if f.confidence is self._C.UNANSWERABLE:
+                        self.assertTrue(f.gaps, f"{facet}/{user}: UNANSWERABLE w/o gap")
+                        self.assertEqual(f.events, [],
+                                         f"{facet}/{user}: UNANSWERABLE with events")
+
+
+class TestSpecConsistency(Base):
+    """The catalog EvidenceSpec and the facet requirements cannot drift."""
+
+    def _req_sources(self, reqs):
+        from openpath.facets.base import AnyOf
+        out = set()
+        for r in reqs:
+            if isinstance(r, AnyOf):
+                out |= {sid for (sid, _i) in r.options}
+            else:
+                out.add(r.source_id)
+        return out
+
+    def test_answerability_matches_facet_requirements(self):
+        from openpath.catalog import spec_for_facet
+        from openpath.facets import FAMILIES
+        from openpath.engine import _AGGREGATE_FACETS
+        for spec in FAMILIES:
+            if spec.name in _AGGREGATE_FACETS:
+                continue
+            espec = spec_for_facet(spec.name)
+            self.assertIsNotNone(espec, spec.name)
+            facet = spec.cls()
+            self.assertEqual(
+                set(espec.answerability_sources()),
+                self._req_sources(getattr(facet, "requirements", ())),
+                f"{spec.name}: spec answerability set != facet requirement sources")
+
+
 class TestCatalog(Base):
     """The frozen catalog stays coherent with the code and the docs."""
 
@@ -1080,8 +1254,10 @@ class TestDemoReadiness(Base):
         self.assertIn("bob", {e.attrs.get("acct") for e in self.finding(root, "aclaye", "accounts").events})
         self.assertIn("devs", {e.attrs.get("grp") for e in self.finding(root, "aclaye", "groups").events})
         self.assertTrue(self.finding(root, "aclaye", "evidence").citations())
-        # gaps facet is honest: on this fully-instrumented host, none outstanding
-        self.assertEqual(self.finding(root, "aclaye", "gaps").gaps, [])
+        # gaps facet is honest: on this fully-instrumented host no COVERAGE gap is
+        # outstanding, though the standing unmodeled-source disclosures remain.
+        gf = self.finding(root, "aclaye", "gaps")
+        self.assertEqual([g for g in gf.gaps if g.question != "scope"], [])
 
     def test_never_invents_for_a_quiet_user(self):
         # A real account that did nothing must get evidenced negatives, not fiction.

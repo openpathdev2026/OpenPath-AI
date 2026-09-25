@@ -35,3 +35,27 @@ not belong in the product.
 
 Every collector is used by at least one certified question. There is no source
 in the codebase that no catalog question requires.
+
+## Evidentiary tiers (ranked by value to an investigation)
+
+Sources are not equal. OpenPath ranks them by SOC evidentiary value, so a question
+degrades gracefully when a low-tier source is missing but stays honest about what a
+high-tier one carries. When audit and wtmp disagree, audit is authoritative.
+
+| Tier | Role | OpenPath sources | Answers |
+|------|------|------------------|---------|
+| 0 | Identity / attribution (WHO / HOW / WHEN) | `auditd`, `auth`, `journal.sshd` | who acted, how they authenticated; `auid` survives sudo/su |
+| 1 | Activity (WHAT ran / files touched) | `auditd` (EXECVE/PATH/CWD), `auth` (sudo-only) | commands, files, root actions |
+| 2 | System state changes (WHAT changed) | `packages`, `auditd` (ADD/DEL user/group), `auth` | software, accounts, groups |
+| 3 | Network (WHERE from / to) | `auditd` (connect/bind + SOCKADDR), `auth`/`journal.sshd` (ssh origin) | egress/ingress, remote origin |
+| 4 | Session corroboration (SUPPORTING) | `wtmp`, `btmp` | confirms a login happened / from where; session-duration intervals; failed logins |
+
+`auditd` spans Tiers 0-3 and is the backbone; `auth` is the audit-absent fallback
+across the same tiers (sudo-scoped for activity); `wtmp`/`btmp` are Tier 4
+corroboration, rarely the primary carrier. Not modeled yet (disclosed as standing
+gaps by the Gaps question): cron/systemd/service state, firewall/VPN/cloud/proxy
+logs, and non-sshd journald.
+
+Per-question source **roles** (primary / partial / supporting / optional) and the
+resulting confidence are defined in `openpath/catalog.py` and explained in
+`LIMITATIONS.md`.

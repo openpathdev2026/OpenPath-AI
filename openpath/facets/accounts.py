@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import os
 
-from openpath.facets.base import AnalysisContext, AnyOf, Facet, prefer_primary
+from openpath.facets.base import AnalysisContext, AnyOf, Facet, prefer_primary, source_met
+from openpath.model.coverage import Gap
 from openpath.model.event import EventType
 from openpath.model.finding import Finding
 
@@ -29,6 +30,26 @@ _ANYOF = AnyOf(
     remedy="run auditd (load contrib/openpath.rules) or ensure /var/log/auth.log "
            "(or /var/log/secure) is present",
 )
+
+
+def _auth_only_scope_gap(ctx: AnalysisContext, question: str):
+    """When only auth.log (no auditd) backs this question, disclose that syslog
+    account/group-change lines carry no actor, so per-user attribution rests on
+    the subject's own admin-tool execs and can miss direct/non-sudo changes."""
+    if source_met(ctx, "auditd", "auditd rules loaded"):
+        return None
+    if not source_met(ctx, "auth"):
+        return None
+    return Gap(
+        question,
+        "attributed from auth.log only (auditd absent); syslog account/group-change "
+        "lines name no actor, so per-user attribution relies on the subject's own "
+        "admin-tool execution -- a direct or non-sudo change by another principal "
+        "may be recorded without attribution.",
+        "auth",
+        remedy="run auditd with account/group auditing so each change carries its "
+               "acting login uid (auid).",
+    )
 
 
 def _admin_execs(ctx: AnalysisContext, tools):
@@ -48,7 +69,11 @@ class AccountsFacet(Facet):
 
     def analyze(self, ctx: AnalysisContext) -> Finding:
         f = self._new_finding(ctx)
-        f.gaps.extend(self._prereq_gaps(ctx))
+        prereq = self._prereq_gaps(ctx)
+        f.gaps.extend(prereq)
+        scope = _auth_only_scope_gap(ctx, "Accounts")
+        if scope:
+            f.gaps.append(scope)
 
         changes = ctx.subject_events([EventType.ACCOUNT_CHANGE])
         admin = _admin_execs(ctx, _ACCOUNT_TOOLS)
@@ -56,7 +81,7 @@ class AccountsFacet(Facet):
         f.events = events
 
         if not events:
-            if any(g.question == "Accounts" for g in f.gaps):
+            if prereq:  # no carrier at all -> genuinely undeterminable
                 f.summary = f"Cannot determine account changes by {ctx.subject.username} (see gaps)."
             else:
                 f.summary = (f"{ctx.subject.username} made no account changes in "
@@ -86,7 +111,11 @@ class GroupsFacet(Facet):
 
     def analyze(self, ctx: AnalysisContext) -> Finding:
         f = self._new_finding(ctx)
-        f.gaps.extend(self._prereq_gaps(ctx))
+        prereq = self._prereq_gaps(ctx)
+        f.gaps.extend(prereq)
+        scope = _auth_only_scope_gap(ctx, "Groups")
+        if scope:
+            f.gaps.append(scope)
 
         changes = ctx.subject_events([EventType.GROUP_CHANGE])
         admin = _admin_execs(ctx, _GROUP_TOOLS)
@@ -94,7 +123,7 @@ class GroupsFacet(Facet):
         f.events = events
 
         if not events:
-            if any(g.question == "Groups" for g in f.gaps):
+            if prereq:  # no carrier at all -> genuinely undeterminable
                 f.summary = f"Cannot determine group changes by {ctx.subject.username} (see gaps)."
             else:
                 f.summary = (f"{ctx.subject.username} made no group changes in "

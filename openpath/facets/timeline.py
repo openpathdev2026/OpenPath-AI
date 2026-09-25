@@ -40,6 +40,11 @@ class TimelineFacet(Facet):
         # Completeness of a chronology is bounded by coverage: surface every gap.
         f.gaps.extend(ctx.ledger.all_gaps())
 
+        # Confidence is federated over the data questions (best-of; blind slices
+        # named). Imported lazily to avoid a facet-module import cycle.
+        from openpath.facets.meta import federated_confidence
+        f.confidence, f.confidence_note = federated_confidence(ctx)
+
         if not events:
             f.summary = (
                 f"No attributable activity for {ctx.subject.username} in "

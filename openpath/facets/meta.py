@@ -27,7 +27,23 @@ from openpath.facets.privilege import (
     RootActivityFacet,
 )
 from openpath.facets.sessions import LoginFacet, SessionsFacet
+from openpath.catalog import spec_for_facet
+from openpath.model.coverage import Gap
+from openpath.model.evidence_matrix import Confidence, assess, derive_aggregate
 from openpath.model.finding import Finding
+
+# Evidence classes OpenPath models no collector for yet. Disclosed as standing,
+# always-open gaps so the "Gaps" answer names its own unknown-unknowns instead of
+# implying the modeled six sources are the whole picture.
+_UNMODELED_SOURCE_GAPS = (
+    "no collector for scheduled-task / service state (cron, systemd timers/units, "
+    "service enable/disable); root activity from a scheduler is disclosed as "
+    "unattributable rather than reconstructed.",
+    "no collector for network origin/destination beyond audited connect/bind "
+    "syscalls (firewall, VPN, cloud, web/proxy logs).",
+    "no general journald collector (only the sshd slice); non-sshd service logs "
+    "are not read.",
+)
 
 
 def _base_facets() -> List[Facet]:
@@ -47,6 +63,33 @@ def _base_facets() -> List[Facet]:
 
 def run_base_findings(ctx: AnalysisContext) -> List[Finding]:
     return [facet.analyze(ctx) for facet in _base_facets()]
+
+
+def data_confidence(ledger, finding) -> Confidence:
+    """Confidence of one data finding via its catalog EvidenceSpec (finding-aware)."""
+    spec = spec_for_facet(finding.facet)
+    if spec is None:
+        return Confidence.CERTIFIED if finding.determined else Confidence.PARTIAL
+    return assess(spec, ledger, finding).confidence
+
+
+def federated_confidence(ctx: AnalysisContext, findings=None):
+    """(Confidence, note) for an aggregate question, best-of over its data slices.
+
+    Best-of never hides a blind slice: the note names every non-certified family
+    explicitly, so a CERTIFIED overview still says exactly what is missing.
+    """
+    if findings is None:
+        findings = run_base_findings(ctx)
+    per = [(fd.question_family, data_confidence(ctx.ledger, fd)) for fd in findings]
+    conf = derive_aggregate([c for _lbl, c in per])
+    blind = [lbl for lbl, c in per if c is not Confidence.CERTIFIED]
+    if not blind:
+        note = f"federated; all {len(per)} question families certified"
+    else:
+        note = (f"federated ({len(per) - len(blind)}/{len(per)} families certified); "
+                f"not fully certified: {', '.join(blind)} -- see gaps")
+    return conf, note
 
 
 class CoreFacet(Facet):
@@ -120,6 +163,7 @@ class CoreFacet(Facet):
             if k not in gap_keys:
                 gap_keys.add(k)
                 f.gaps.append(g)
+        f.confidence, f.confidence_note = federated_confidence(ctx, findings)
         return f
 
 
@@ -168,6 +212,7 @@ class EvidenceFacet(Facet):
             f.notes.append(f"--- {source_id} ({len(cites)} record(s)) ---")
             for c in cites:
                 f.notes.append(f"  {c.locator}: {c.raw}")
+        f.confidence, f.confidence_note = federated_confidence(ctx, findings)
         return f
 
 
@@ -220,6 +265,14 @@ class GapsFacet(Facet):
             for n in ctx.subject.resolution_notes:
                 f.notes.append(f"  - {n}")
 
+        # 5. Standing blind spots: whole classes of evidence OpenPath models no
+        # collector for. Naming them keeps "Gaps" from hiding unknown-unknowns --
+        # its completeness is explicitly bounded to the modeled source set.
+        for reason in _UNMODELED_SOURCE_GAPS:
+            f.gaps.append(Gap("scope", reason, None,
+                              "add a collector for this source class, or ingest an "
+                              "equivalent evidence bundle"))
+
         if f.gaps:
             f.summary = (
                 f"OpenPath could not fully determine {len(f.gaps)} aspect(s) of "
@@ -231,4 +284,10 @@ class GapsFacet(Facet):
                 f"No coverage gaps: every question family for {ctx.subject.username} "
                 f"was answerable from present, instrumented, in-horizon sources."
             )
+        # Gaps is always answerable: its content IS the disclosure of what the
+        # other questions could not determine (an absent source produces MORE gap
+        # content, not less). Its completeness is bounded to the modeled sources.
+        f.confidence = Confidence.CERTIFIED
+        f.confidence_note = ("the gap ledger is itself the disclosure; bounded to "
+                             "the modeled source set (see standing scope gaps)")
         return f

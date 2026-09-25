@@ -219,6 +219,11 @@ class AuditRules:
     def has_bind(self) -> bool:
         return "bind" in self.syscalls or "all" in self.syscalls
 
+    @property
+    def has_file_syscalls(self) -> bool:
+        """A host-wide write-syscall rule (not merely path-scoped ``-w`` watches)."""
+        return bool(self.syscalls & _FILE_WRITE_SYSCALLS) or "all" in self.syscalls
+
 
 def parse_audit_rules(env: Env) -> AuditRules:
     rules = AuditRules()
@@ -245,7 +250,10 @@ def parse_audit_rules(env: Env) -> AuditRules:
                 i = 0
                 while i < len(tokens):
                     if tokens[i] == "-S" and i + 1 < len(tokens):
-                        rules.syscalls.add(tokens[i + 1])
+                        # auditctl accepts a comma-separated list: -S a,b,c
+                        for name in tokens[i + 1].split(","):
+                            if name:
+                                rules.syscalls.add(name)
                     i += 1
             if s.startswith("-w ") or tokens[:1] == ["-w"]:
                 path = perms = None
@@ -671,12 +679,33 @@ class AuditdCollector(Collector):
                 "" if (rules.has_connect or rules.has_bind or saw_net) else
                 "no connect/bind rule loaded; network syscalls are not recorded",
             ),
+            # Granular direction checks: full network certification needs BOTH
+            # outbound (connect) and inbound (bind) recorded; one alone leaves the
+            # other direction a disclosed blind spot.
+            InstrumentationCheck(
+                "connect audit rule", rules.has_connect,
+                "" if rules.has_connect else
+                "no connect rule loaded; outbound connections are not recorded",
+            ),
+            InstrumentationCheck(
+                "bind audit rule", rules.has_bind,
+                "" if rules.has_bind else
+                "no bind rule loaded; inbound bind/listen is not recorded",
+            ),
             InstrumentationCheck(
                 "file watch/modify audit rule",
-                bool(rules.watches) or saw_file,
-                "" if (rules.watches or saw_file) else
+                bool(rules.watches) or rules.has_file_syscalls or saw_file,
+                "" if (rules.watches or rules.has_file_syscalls or saw_file) else
                 "no file watch (-w) or write-syscall rule loaded; file changes are "
                 "not recorded",
+            ),
+            # A host-wide write-syscall rule certifies "any file"; path-scoped -w
+            # watches only certify changes under the watched paths.
+            InstrumentationCheck(
+                "host-wide file-change rule", rules.has_file_syscalls,
+                "" if rules.has_file_syscalls else
+                "only path-scoped file watches loaded; changes outside the watched "
+                "paths are not recorded",
             ),
         ]
         return checks

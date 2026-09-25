@@ -57,8 +57,9 @@ each subject against the shared event set.
 | `model/citation.py` | `Citation`: verifiable pointer to a raw record. |
 | `model/timerange.py` | Tolerant time parsing → closed UTC `TimeRange`. |
 | `model/identity.py` | `resolve_identity` (name→subject) and `resolve_name_for_uid` (uid→name), both time-bounded. |
-| `model/coverage.py` | `SourceCoverage`, `Gap`, `CoverageLedger`; horizon + retention logic. |
-| `model/finding.py` | `Finding`: a facet's answer (summary + events + gaps). |
+| `model/coverage.py` | `SourceCoverage`, `Gap`, `CoverageLedger`; horizon + retention + conservation logic; `ledger_source_met`. |
+| `model/evidence_matrix.py` | `EvidenceSpec` (per-question source tiers), `Confidence`, `assess` (finding-aware CERTIFIED/PARTIAL/UNANSWERABLE), `derive_aggregate` (best-of). |
+| `model/finding.py` | `Finding`: a facet's answer (summary + events + gaps + confidence). |
 | `sources/` | Collectors: `wtmp` (binary), `btmp` (failed logins, shares the utmp parser), `auditd` (streaming), `auth` (syslog auth.log/secure), `journal_sshd`, `packages` (dnf/dpkg). |
 | `facets/` | One analyzer per question family + `attribution` + Core/Evidence/Gaps aggregators. |
 | `engine.py` | Collect → resolve identity → run facet; single- and multi-user. |

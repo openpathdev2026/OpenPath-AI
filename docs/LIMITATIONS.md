@@ -29,6 +29,32 @@ boundaries, stated plainly.
 - **Natural-language parsing** of a question is best-effort; `--user`, `--facet`,
   `--window`/`--since`/`--until`, and `--around` are the authoritative inputs.
 
+## Answer confidence & resilience (the federated evidence model)
+OpenPath treats the **question**, not the source, as the unit. Every catalog
+question declares which sources are its primary carriers, which are corroboration,
+and what confidence the answer earns from what is present (`openpath/catalog.py`):
+
+- **CERTIFIED** — a primary carrier was present and instrumented; an empty result is
+  a true evidenced negative.
+- **PARTIAL** — substantive and cited, but a named scope/coverage gap is disclosed
+  (e.g. auth.log only, so non-sudo commands are unseen; a path-scoped file watch;
+  a connect-only network rule).
+- **UNANSWERABLE** — no usable carrier; "cannot determine (see gaps)", never a false
+  negative.
+
+Sources are ranked by SOC evidentiary value: Tier 0-1 (auditd, auth.log, sshd
+journal) carry identity/attribution and activity; Tier 4 (wtmp, btmp) is session
+corroboration. So losing a **supporting** source does not make a question
+unanswerable — the answer stands and the confidence line names what was lost
+("CERTIFIED; corroborating source wtmp absent"). A hard invariant holds: a finding
+with determined, cited events is never UNANSWERABLE, so the confidence line can
+never contradict the answer. Core/Timeline/Evidence federate best-of and name every
+non-certified slice; Gaps is always answerable (its content is the disclosure).
+
+Confidence is honest about degraded modes, not omniscient: "did the user become
+root?" from auth.log alone is PARTIAL, because non-PAM privilege gains and the full
+extent of root activity are not recorded without auditd.
+
 ## Evidence conservation (no silent loss)
 A record OpenPath reads must be either turned into a cited event or explicitly
 counted as undecodable — it may never just vanish. Each collector reports

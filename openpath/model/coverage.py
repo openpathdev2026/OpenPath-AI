@@ -129,6 +129,23 @@ class SourceCoverage:
         }
 
 
+def ledger_source_met(ledger: "CoverageLedger", source_id: str,
+                      instrument: Optional[str] = None) -> bool:
+    """True if a source is usable for answering (present, in-horizon, instrumented).
+
+    The single availability predicate shared by the facet prereq checks and the
+    confidence layer, so "answerable" and "not UNANSWERABLE" can never disagree.
+    """
+    cov = ledger.get(source_id)
+    if cov is None or cov.status in (
+        SourceStatus.ABSENT, SourceStatus.UNREADABLE, SourceStatus.OUT_OF_HORIZON,
+    ):
+        return False
+    if instrument is not None and not cov.has_instrument(instrument):
+        return False
+    return True
+
+
 @dataclass
 class Gap:
     """Something OpenPath could not determine, stated plainly with a reason.

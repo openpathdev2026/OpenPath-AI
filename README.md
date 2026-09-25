@@ -49,15 +49,22 @@ in-memory actions, tampering). So OpenPath does not claim omniscience. It claims
 something stronger and actually achievable:
 
 - **Soundness** — every asserted fact carries a citation to a raw source record
-  (question family **12 · Evidence**). If a fact cannot be cited, it is not
-  asserted.
+  (**Q14 · Evidence**). If a fact cannot be cited, it is not asserted.
 - **Disclosure** — anything that cannot be determined is reported with a reason
-  and a remedy (question family **13 · Gaps**), never returned as an empty result
-  that implies "the user did nothing".
+  and a remedy (**Q15 · Gaps**), never returned as an empty result that implies
+  "the user did nothing".
+- **Conservation** — a record that is read but cannot be decoded is counted and
+  disclosed, never silently dropped (`--coverage` ends with an `EVIDENCE
+  CONSERVATION: OK/FAIL` verdict).
+- **Resilience** — questions are ranked by *which* sources carry the answer, so
+  losing a supporting source (e.g. wtmp) keeps the question answerable and the
+  confidence line says what was lost. Every answer is labelled **CERTIFIED /
+  PARTIAL / UNANSWERABLE**, and that label can never contradict the answer (a
+  finding with cited events is never "unanswerable").
 
-Under those two invariants the question catalog becomes a **product-readiness
-baseline**: for any user and any window, every answer is true and cited, and every
-limit is stated.
+Under those invariants the question catalog becomes a **product-readiness
+baseline**: for any user and any window, every answer is true and cited, every
+limit is stated, and the story survives a missing source.
 
 ## The frozen question catalog
 

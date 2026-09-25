@@ -17,10 +17,11 @@ a false negative.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from openpath.model.citation import Citation
 from openpath.model.coverage import Gap
+from openpath.model.evidence_matrix import Confidence
 from openpath.model.event import Event
 from openpath.model.timerange import TimeRange
 
@@ -35,6 +36,11 @@ class Finding:
     events: List[Event] = field(default_factory=list)
     notes: List[str] = field(default_factory=list)
     gaps: List[Gap] = field(default_factory=list)
+    # Federated-evidence confidence: CERTIFIED / PARTIAL / UNANSWERABLE, plus a
+    # one-line basis (winning source + missing-but-non-fatal corroboration). Set by
+    # the engine/facet after analysis; None until then.
+    confidence: Optional[Confidence] = None
+    confidence_note: str = ""
 
     def citations(self) -> List[Citation]:
         """Every citation behind this finding, order-preserving and de-duplicated."""
@@ -64,4 +70,6 @@ class Finding:
             "notes": list(self.notes),
             "gaps": [g.to_dict() for g in self.gaps],
             "citation_count": len(self.citations()),
+            "confidence": self.confidence.value if self.confidence else None,
+            "confidence_note": self.confidence_note,
         }

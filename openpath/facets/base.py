@@ -18,7 +18,12 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Iterable, List, Optional, Sequence, Tuple
 
-from openpath.model.coverage import CoverageLedger, Gap, SourceStatus
+from openpath.model.coverage import (
+    CoverageLedger,
+    Gap,
+    SourceStatus,
+    ledger_source_met,
+)
 from openpath.model.event import Event, EventType
 from openpath.model.finding import Finding
 from openpath.model.identity import Subject
@@ -84,14 +89,7 @@ class AnyOf:
 
 def source_met(ctx: AnalysisContext, source_id: str,
                instrument: Optional[str] = None) -> bool:
-    cov = ctx.ledger.get(source_id)
-    if cov is None or cov.status in (
-        SourceStatus.ABSENT, SourceStatus.UNREADABLE, SourceStatus.OUT_OF_HORIZON,
-    ):
-        return False
-    if instrument is not None and not cov.has_instrument(instrument):
-        return False
-    return True
+    return ledger_source_met(ctx.ledger, source_id, instrument)
 
 
 def prefer_primary(ctx: AnalysisContext, events: List[Event], *,

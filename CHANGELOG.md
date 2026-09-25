@@ -6,6 +6,29 @@ based on Keep a Changelog; dates are UTC.
 ## [Unreleased]
 
 ### Added
+- **Federated evidence model + answer confidence (resilience).** Every catalog
+  question now declares, in `openpath/catalog.py`, which sources are its **primary**
+  carriers (certified), which yield only a **partial** answer, and which merely
+  **corroborate** (supporting/optional) — ranked by SOC evidentiary tier (auditd /
+  auth / journal are Tier 0-1 primary; wtmp/btmp are Tier 4 corroboration). Each
+  answer now carries a confidence — **CERTIFIED / PARTIAL / UNANSWERABLE** — computed
+  finding-aware in `openpath/model/evidence_matrix.py`, with the hard invariant that
+  a finding with determined, cited events is *never* UNANSWERABLE (the confidence
+  line can never contradict the answer). The result is resilience: losing a
+  supporting source (e.g. wtmp) keeps the question answerable and the confidence
+  line says which source was gone ("CERTIFIED; corroborating source wtmp absent").
+  Core/Timeline/Evidence federate best-of and name every blind slice; Gaps is
+  always answerable and now discloses standing unmodeled-source classes
+  (cron/systemd, firewall/VPN/cloud, non-sshd journald) so it never hides
+  unknown-unknowns. `--coverage` shows a per-question CERT/PART/---- tri-state with
+  counts; each answer prints a CONFIDENCE block; JSON gains `confidence` /
+  `confidence_note`. Soundness fixes from an adversarial design review: the auditd
+  rules parser splits comma-separated `-S a,b,c`; a narrow `-w` watch (no host-wide
+  write-syscall rule) downgrades Files to PARTIAL; a connect-only or bind-only rule
+  downgrades Network to PARTIAL; the auth-only accounts/groups path discloses its
+  no-actor attribution limit. Covered by `TestFederatedEvidence` (drop-any-source
+  resilience matrix), `TestConfidenceInvariants` (label never contradicts finding),
+  and `TestSpecConsistency` (matrix and facet requirements cannot drift).
 - **Evidence conservation (no silent loss).** Every collector now reports
   `records_scanned` and `unparseable`; a record that is read but cannot be decoded
   is **counted and disclosed** as a `conservation` gap instead of vanishing. Wired

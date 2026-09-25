@@ -61,15 +61,21 @@ def render_readiness(report: ReadinessReport) -> str:
     lines.append("=" * 72)
     lines.append("OpenPath | Host readiness")
     lines.append(f"Window  : {report.window.describe()}")
-    lines.append(f"Answerable: {report.answerable} of {report.data_total} data "
+    lines.append(f"Certified: {report.certified}  Partial: {report.partial}  "
+                 f"Unanswerable: {report.unanswerable}  of {report.data_total} data "
                  f"questions (+ {len(report.families) - report.data_total} "
                  f"aggregate views)")
     lines.append("=" * 72)
     lines.append("")
     lines.append("QUESTION FAMILIES")
+    _CODE = {"certified": "CERT", "partial": "PART", "unanswerable": "----"}
     for fr in report.families:
-        mark = "agg" if fr.kind == "aggregate" else ("OK " if fr.answerable else "-- ")
-        lines.append(f"  [{mark}] {fr.number:2d} {fr.label}")
+        cval = fr.confidence.value if fr.confidence else ""
+        if fr.kind == "aggregate":
+            lines.append(f"  [agg ] {fr.number:2d} {fr.label}"
+                         f" -> {cval.upper() or 'n/a'}")
+        else:
+            lines.append(f"  [{_CODE.get(cval, '?   ')}] {fr.number:2d} {fr.label}")
         for g in fr.gaps:
             lines.append(f"           needs: {g.reason}")
             if g.remedy:
@@ -118,6 +124,13 @@ def render_text(result: AnalysisResult, *, verbose: bool = False) -> str:
     lines.append("")
     lines.append("ANSWER")
     lines.append(f"  {f.summary}")
+
+    # Confidence is separate from the answer: a CERTIFIED answer with a corroborating
+    # source missing says so here rather than weakening the answer itself.
+    if f.confidence is not None:
+        lines.append("")
+        lines.append("CONFIDENCE")
+        lines.append(f"  {f.confidence.value.upper():12s} ({f.confidence_note})")
 
     if f.facet in _OVERVIEW_FACETS:
         if f.notes:
