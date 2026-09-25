@@ -1,0 +1,34 @@
+"""Collectors and the default registry.
+
+Each collector reads one raw source under ``env.data_root`` and returns normalized,
+cited events plus a coverage report. The registry is the ordered set the engine
+runs for a full analysis.
+"""
+
+from typing import List
+
+from openpath.sources.auditd import AuditdCollector
+from openpath.sources.base import CollectResult, Collector
+from openpath.sources.journal_sshd import SshdJournalCollector
+from openpath.sources.packages import PackageCollector
+from openpath.sources.wtmp import WtmpCollector
+
+
+def default_collectors() -> List[Collector]:
+    return [
+        WtmpCollector(),
+        SshdJournalCollector(),
+        AuditdCollector(),
+        PackageCollector(),
+    ]
+
+
+__all__ = [
+    "Collector",
+    "CollectResult",
+    "WtmpCollector",
+    "SshdJournalCollector",
+    "AuditdCollector",
+    "PackageCollector",
+    "default_collectors",
+]

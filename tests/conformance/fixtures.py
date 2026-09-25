@@ -1,0 +1,337 @@
+"""Synthetic host builder that emits *real-format* evidence logs.
+
+The whole point of the conformance suite is to prove OpenPath answers correctly
+for arbitrary and brand-new users. To do that honestly the fixtures must be the
+genuine on-disk formats, parsed by exactly the production collectors -- not mock
+objects. So:
+
+    * wtmp is written as real 384-byte ``struct utmp`` records (via the collector's
+      own struct definition, used in reverse);
+    * auditd records are written as real ``audit.log`` text grouped by event serial,
+      with hex-encoded fields where the kernel would hex-encode them;
+    * dnf.rpm.log / dpkg.log / the sshd journal export use their real line formats.
+
+``HostBuilder`` accumulates events and writes the bundle; a test then points an
+:class:`~openpath.env.Env` at the bundle root.
+"""
+
+from __future__ import annotations
+
+import binascii
+import itertools
+import json
+import socket
+import struct
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import List, Optional
+
+from openpath.sources.wtmp import (
+    _UTMP_STRUCT, BOOT_TIME, DEAD_PROCESS, USER_PROCESS,
+)
+
+# x86-64 syscall numbers used by fixtures.
+SYS = {
+    "execve": 59, "connect": 42, "bind": 49, "listen": 50,
+    "unlink": 87, "rename": 82, "chmod": 90, "chown": 92,
+    "creat": 85, "openat": 257, "truncate": 76,
+}
+
+
+def _epoch_msec(ts: datetime) -> str:
+    t = ts.astimezone(timezone.utc).timestamp()
+    sec = int(t)
+    msec = int(round((t - sec) * 1000))
+    if msec == 1000:
+        sec += 1
+        msec = 0
+    return f"{sec}.{msec:03d}"
+
+
+def _hex(s: str) -> str:
+    return binascii.hexlify(s.encode()).decode()
+
+
+def _saddr_inet(ip: str, port: int) -> str:
+    b = struct.pack("<H", socket.AF_INET) + struct.pack(">H", port)
+    b += socket.inet_aton(ip) + b"\x00" * 8
+    return binascii.hexlify(b).decode()
+
+
+def _saddr_inet6(ip: str, port: int) -> str:
+    b = struct.pack("<H", socket.AF_INET6) + struct.pack(">H", port)
+    b += b"\x00" * 4 + socket.inet_pton(socket.AF_INET6, ip) + b"\x00" * 4
+    return binascii.hexlify(b).decode()
+
+
+class HostBuilder:
+    def __init__(self, root: Path, tz=timezone.utc):
+        self.root = Path(root)
+        self.tz = tz
+        self._wtmp: List[bytes] = []
+        self._wtmp_prev: List[bytes] = []
+        self._audit: List[str] = []
+        self._audit_prev: List[str] = []
+        self._dnf: List[str] = []
+        self._dpkg: List[str] = []
+        self._journal: List[dict] = []
+        self._passwd: List[tuple] = []
+        self._group: List[tuple] = []
+        self._rules: List[str] = []
+        self._serial = itertools.count(1000)
+        self.auditd_present = True
+
+    def no_auditd(self):
+        """Simulate a host where auditd is not installed/running at all."""
+        self.auditd_present = False
+        return self
+
+    # -- passwd / group ----------------------------------------------------- #
+
+    def passwd(self, name: str, uid: int, gid: int = None):
+        self._passwd.append((name, uid, gid if gid is not None else uid))
+        return self
+
+    def group(self, name: str, gid: int, members: List[str] = ()):
+        self._group.append((name, gid, list(members)))
+        return self
+
+    # -- audit rules -------------------------------------------------------- #
+
+    def enable_execve(self):
+        self._rules.append("-a always,exit -F arch=b64 -S execve -S execveat -k exec")
+        return self
+
+    def enable_network(self):
+        self._rules.append("-a always,exit -F arch=b64 -S connect -S bind -k net")
+        return self
+
+    def watch(self, path: str, perms: str = "wa", key: str = "watch"):
+        self._rules.append(f"-w {path} -p {perms} -k {key}")
+        return self
+
+    def enable_file_syscalls(self):
+        self._rules.append(
+            "-a always,exit -F arch=b64 -S unlink,unlinkat,rename,renameat,"
+            "chmod,chown,creat,truncate -k file-change")
+        return self
+
+    # -- wtmp --------------------------------------------------------------- #
+
+    def _pack(self, ut_type, pid, line, user, host, ts):
+        tv_sec = int(ts.astimezone(timezone.utc).timestamp()) if ts else 0
+        return _UTMP_STRUCT.pack(
+            ut_type, pid, line.encode()[:31], b"id"[:4], user.encode()[:31],
+            host.encode()[:255], 0, 0, 0, tv_sec, 0, 0, 0, 0, 0, b"",
+        )
+
+    def login(self, user, at, line="pts/0", host="", pid=2000, until=None):
+        self._wtmp.append(self._pack(USER_PROCESS, pid, line, user, host, at))
+        if until is not None:
+            self._wtmp.append(self._pack(DEAD_PROCESS, pid, line, "", "", until))
+        return self
+
+    def boot(self, at, kernel="6.0.0"):
+        self._wtmp.append(self._pack(BOOT_TIME, 0, "~", "reboot", kernel, at))
+        return self
+
+    # -- sshd journal ------------------------------------------------------- #
+
+    def _journal_entry(self, msg, at):
+        usec = int(at.astimezone(timezone.utc).timestamp() * 1_000_000)
+        self._journal.append({
+            "__REALTIME_TIMESTAMP": str(usec),
+            "_COMM": "sshd", "SYSLOG_IDENTIFIER": "sshd", "MESSAGE": msg,
+        })
+
+    def ssh_accept(self, user, ip, at, method="publickey", port=51000):
+        self._journal_entry(
+            f"Accepted {method} for {user} from {ip} port {port} ssh2", at)
+        return self
+
+    def ssh_fail(self, user, ip, at, method="password", port=51000):
+        self._journal_entry(
+            f"Failed {method} for {user} from {ip} port {port} ssh2", at)
+        return self
+
+    # -- auditd syscall events ---------------------------------------------- #
+
+    def exec(self, auid, uid, argv, exe, at, cwd="/root", euid=None,
+             key="exec", comm=None):
+        euid = uid if euid is None else euid
+        comm = comm or (argv[0] if argv else "prog")
+        sid = next(self._serial)
+        aid = f"{_epoch_msec(at)}:{sid}"
+        keyfield = f' key="{key}"' if key else ""
+        self._audit.append(
+            f"type=SYSCALL msg=audit({aid}): arch=c000003e syscall={SYS['execve']} "
+            f"success=yes exit=0 ppid=1000 pid=3{sid} auid={auid} uid={uid} gid=0 "
+            f"euid={euid} suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=pts0 ses=3 "
+            f'comm="{comm}" exe="{exe}"{keyfield}')
+        argfields = " ".join(f'a{i}="{a}"' for i, a in enumerate(argv))
+        self._audit.append(
+            f"type=EXECVE msg=audit({aid}): argc={len(argv)} {argfields}")
+        self._audit.append(f'type=CWD msg=audit({aid}): cwd="{cwd}"')
+        return self
+
+    def sudo(self, auid, uid, cmd, at, cwd="/home", terminal="pts/0",
+             res="success"):
+        sid = next(self._serial)
+        aid = f"{_epoch_msec(at)}:{sid}"
+        self._audit.append(
+            f"type=USER_CMD msg=audit({aid}): pid=3{sid} uid={uid} auid={auid} "
+            f"ses=3 msg='cwd=\"{cwd}\" cmd={_hex(cmd)} terminal={terminal} "
+            f"res={res}' exe=\"/usr/bin/sudo\"")
+        return self
+
+    def su(self, auid, uid, at, res="success"):
+        sid = next(self._serial)
+        aid = f"{_epoch_msec(at)}:{sid}"
+        self._audit.append(
+            f"type=USER_START msg=audit({aid}): pid=3{sid} uid={uid} auid={auid} "
+            f"ses=3 msg='op=PAM:session_open exe=\"/usr/bin/su\" hostname=? "
+            f"addr=? terminal=pts/0 res={res}'")
+        return self
+
+    def connect(self, auid, uid, ip, port, at, comm="curl",
+                exe="/usr/bin/curl", euid=None, v6=False):
+        euid = uid if euid is None else euid
+        sid = next(self._serial)
+        aid = f"{_epoch_msec(at)}:{sid}"
+        saddr = _saddr_inet6(ip, port) if v6 else _saddr_inet(ip, port)
+        self._audit.append(
+            f"type=SYSCALL msg=audit({aid}): arch=c000003e syscall={SYS['connect']} "
+            f"success=yes exit=0 pid=3{sid} auid={auid} uid={uid} euid={euid} "
+            f'comm="{comm}" exe="{exe}"')
+        self._audit.append(f"type=SOCKADDR msg=audit({aid}): saddr={saddr}")
+        return self
+
+    def bind(self, auid, uid, ip, port, at, comm="nginx", exe="/usr/sbin/nginx"):
+        sid = next(self._serial)
+        aid = f"{_epoch_msec(at)}:{sid}"
+        self._audit.append(
+            f"type=SYSCALL msg=audit({aid}): arch=c000003e syscall={SYS['bind']} "
+            f"success=yes exit=0 pid=3{sid} auid={auid} uid={uid} euid={uid} "
+            f'comm="{comm}" exe="{exe}"')
+        self._audit.append(
+            f"type=SOCKADDR msg=audit({aid}): saddr={_saddr_inet(ip, port)}")
+        return self
+
+    def file_change(self, auid, uid, op, path, at, euid=None,
+                    nametype=None, key=None):
+        euid = uid if euid is None else euid
+        sid = next(self._serial)
+        aid = f"{_epoch_msec(at)}:{sid}"
+        if nametype is None:
+            nametype = {"unlink": "DELETE", "creat": "CREATE"}.get(op, "NORMAL")
+        keyfield = f' key="{key}"' if key else ""
+        self._audit.append(
+            f"type=SYSCALL msg=audit({aid}): arch=c000003e syscall={SYS[op]} "
+            f"success=yes exit=0 pid=3{sid} auid={auid} uid={uid} euid={euid} "
+            f'comm="prog" exe="/usr/bin/prog"{keyfield}')
+        self._audit.append(
+            f'type=PATH msg=audit({aid}): item=0 name="{path}" nametype={nametype}')
+        return self
+
+    def add_user(self, auid, acct, uid, at, res="success"):
+        sid = next(self._serial)
+        aid = f"{_epoch_msec(at)}:{sid}"
+        self._audit.append(
+            f"type=ADD_USER msg=audit({aid}): pid=3{sid} uid=0 auid={auid} ses=3 "
+            f"msg='op=add-user acct=\"{acct}\" id={uid} exe=\"/usr/sbin/useradd\" "
+            f"hostname=h addr=? terminal=pts/0 res={res}'")
+        return self
+
+    def del_user(self, auid, acct, uid, at, res="success"):
+        sid = next(self._serial)
+        aid = f"{_epoch_msec(at)}:{sid}"
+        self._audit.append(
+            f"type=DEL_USER msg=audit({aid}): pid=3{sid} uid=0 auid={auid} ses=3 "
+            f"msg='op=delete-user acct=\"{acct}\" id={uid} exe=\"/usr/sbin/userdel\" "
+            f"hostname=h addr=? terminal=pts/0 res={res}'")
+        return self
+
+    def chauthtok(self, auid, acct, uid, at, res="success"):
+        sid = next(self._serial)
+        aid = f"{_epoch_msec(at)}:{sid}"
+        self._audit.append(
+            f"type=USER_CHAUTHTOK msg=audit({aid}): pid=3{sid} uid=0 auid={auid} "
+            f"ses=3 msg='op=PAM:chauthtok acct=\"{acct}\" id={uid} "
+            f"exe=\"/usr/bin/passwd\" hostname=h addr=? terminal=pts/0 res={res}'")
+        return self
+
+    def add_group(self, auid, grp, gid, at, res="success"):
+        sid = next(self._serial)
+        aid = f"{_epoch_msec(at)}:{sid}"
+        self._audit.append(
+            f"type=ADD_GROUP msg=audit({aid}): pid=3{sid} uid=0 auid={auid} ses=3 "
+            f"msg='op=add-group grp=\"{grp}\" id={gid} exe=\"/usr/sbin/groupadd\" "
+            f"hostname=h addr=? terminal=pts/0 res={res}'")
+        return self
+
+    # -- packages ----------------------------------------------------------- #
+
+    def pkg(self, verb, nevra, at):
+        self._dnf.append(f"{at.astimezone(self.tz).strftime('%Y-%m-%dT%H:%M:%S%z')} "
+                         f"INFO {verb}: {nevra}")
+        return self
+
+    def dpkg(self, action, pkg, vfrom, vto, at):
+        self._dpkg.append(
+            f"{at.astimezone(self.tz).strftime('%Y-%m-%d %H:%M:%S')} "
+            f"{action} {pkg} {vfrom} {vto}")
+        return self
+
+    def rotate_logs(self):
+        """Move everything accumulated so far into rotated (.1) files.
+
+        Used to simulate retention: records already written land in wtmp.1 /
+        audit.log.1, and the presence of those rotated files marks the source as
+        retention-bounded so a genuine horizon shortfall can be detected.
+        """
+        self._wtmp_prev += self._wtmp
+        self._wtmp = []
+        self._audit_prev += self._audit
+        self._audit = []
+        return self
+
+    # -- materialize -------------------------------------------------------- #
+
+    def write(self) -> Path:
+        if self.auditd_present:
+            (self.root / "var/log/audit").mkdir(parents=True, exist_ok=True)
+            (self.root / "etc/audit/rules.d").mkdir(parents=True, exist_ok=True)
+        (self.root / "var/log/openpath").mkdir(parents=True, exist_ok=True)
+
+        if self._wtmp_prev:
+            (self.root / "var/log/wtmp.1").write_bytes(b"".join(self._wtmp_prev))
+        if self._wtmp:
+            (self.root / "var/log/wtmp").write_bytes(b"".join(self._wtmp))
+        if self.auditd_present:
+            if self._audit_prev:
+                (self.root / "var/log/audit/audit.log.1").write_text(
+                    "\n".join(self._audit_prev) + "\n")
+            if self._audit:
+                (self.root / "var/log/audit/audit.log").write_text(
+                    "\n".join(self._audit) + "\n")
+            # Write a rules file (possibly empty). An empty file still means
+            # "auditd running, no syscall rules loaded" -- distinct from absent.
+            (self.root / "etc/audit/audit.rules").write_text(
+                "\n".join(self._rules) + ("\n" if self._rules else ""))
+        if self._dnf:
+            (self.root / "var/log/dnf.rpm.log").write_text("\n".join(self._dnf) + "\n")
+        if self._dpkg:
+            (self.root / "var/log/dpkg.log").write_text("\n".join(self._dpkg) + "\n")
+        if self._journal:
+            (self.root / "var/log/openpath/journal-sshd.jsonl").write_text(
+                "\n".join(json.dumps(e) for e in self._journal) + "\n")
+        if self._passwd:
+            (self.root / "etc").mkdir(parents=True, exist_ok=True)
+            (self.root / "etc/passwd").write_text(
+                "\n".join(f"{n}:x:{u}:{g}::/home/{n}:/bin/bash"
+                          for n, u, g in self._passwd) + "\n")
+        if self._group:
+            (self.root / "etc/group").write_text(
+                "\n".join(f"{n}:x:{g}:{','.join(m)}"
+                          for n, g, m in self._group) + "\n")
+        return self.root

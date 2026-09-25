@@ -1,0 +1,80 @@
+"""Facet registry: the 13 question families.
+
+Each entry ties a stable facet ``name`` to its human family label and the class
+that answers it. The CLI router maps a natural-language question to one of these
+names; the engine instantiates and runs it.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Dict, List, Type
+
+from openpath.facets.accounts import AccountsFacet
+from openpath.facets.base import AnalysisContext, Facet
+from openpath.facets.files import FilesFacet
+from openpath.facets.meta import CoreFacet, EvidenceFacet, GapsFacet
+from openpath.facets.network import NetworkFacet
+from openpath.facets.packages import PackagesFacet
+from openpath.facets.privilege import (
+    CommandsFacet,
+    PrivilegeFacet,
+    RootActivityFacet,
+)
+from openpath.facets.sessions import LoginFacet, SessionsFacet
+from openpath.facets.timeline import TimelineFacet
+
+
+@dataclass(frozen=True)
+class FamilySpec:
+    number: int
+    name: str
+    label: str
+    cls: Type[Facet]
+
+
+# The canonical 13-question taxonomy, in demo order.
+FAMILIES: List[FamilySpec] = [
+    FamilySpec(1, "core", "Core", CoreFacet),
+    FamilySpec(2, "timeline", "Timeline", TimelineFacet),
+    FamilySpec(3, "sessions", "Sessions", SessionsFacet),
+    FamilySpec(4, "login", "Login", LoginFacet),
+    FamilySpec(5, "privilege", "Privilege", PrivilegeFacet),
+    FamilySpec(6, "root_activity", "Root activity", RootActivityFacet),
+    FamilySpec(7, "commands", "Commands", CommandsFacet),
+    FamilySpec(8, "files", "Files", FilesFacet),
+    FamilySpec(9, "accounts", "Accounts/groups", AccountsFacet),
+    FamilySpec(10, "packages", "Packages", PackagesFacet),
+    FamilySpec(11, "network", "Network", NetworkFacet),
+    FamilySpec(12, "evidence", "Evidence", EvidenceFacet),
+    FamilySpec(13, "gaps", "Gaps", GapsFacet),
+]
+
+_BY_NAME: Dict[str, FamilySpec] = {spec.name: spec for spec in FAMILIES}
+_BY_NUMBER: Dict[int, FamilySpec] = {spec.number: spec for spec in FAMILIES}
+
+
+def get_facet(name: str) -> Facet:
+    spec = _BY_NAME.get(name)
+    if spec is None:
+        raise KeyError(f"unknown facet: {name}")
+    return spec.cls()
+
+
+def get_spec(name: str) -> FamilySpec:
+    return _BY_NAME[name]
+
+
+def spec_by_number(number: int) -> FamilySpec:
+    return _BY_NUMBER[number]
+
+
+__all__ = [
+    "AnalysisContext",
+    "Facet",
+    "FamilySpec",
+    "FAMILIES",
+    "get_facet",
+    "get_spec",
+    "spec_by_number",
+]

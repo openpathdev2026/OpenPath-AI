@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openpath-ai"
+version = "0.1.0"
+description = "Evidence-first forensic Q&A for Linux user activity: sound answers, disclosed gaps."
+requires-python = ">=3.9"
+authors = [{ name = "OpenPath" }]
+readme = "README.md"
+# Intentionally zero runtime dependencies: pure Python standard library only.
+# This is a portability guarantee ("any Linux system") and removes install-time
+# network requirements.
+dependencies = []
+
+[project.scripts]
+openpath-ai = "openpath.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["openpath*"]
+
+[tool.setuptools.package-data]
+openpath = ["py.typed"]
