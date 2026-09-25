@@ -103,6 +103,9 @@ def _verb_phrase(e: Event) -> str:
         res = "authenticated" if a.get("result") == "accepted" \
             else "failed to authenticate"
         return (f"{res} over SSH from {a.get('ip')} using {a.get('method')}")
+    if t is EventType.LOGIN and a.get("result") == "failed":
+        return (f"failed a login attempt from {a.get('origin') or 'local'} "
+                f"on {a.get('line') or 'a terminal'}")
     if t is EventType.BOOT:
         return "the system booted"
     return e.summary

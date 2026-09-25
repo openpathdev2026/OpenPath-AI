@@ -6,6 +6,11 @@ based on Keep a Changelog; dates are UTC.
 ## [Unreleased]
 
 ### Added
+- **Failed-login evidence (`btmp`).** Reads `/var/log/btmp` (the source behind
+  `lastb`, same `struct utmp` binary format as wtmp) so the Login question also
+  answers "who tried and failed to log in as <user>, and from where" — including
+  attempts on accounts that never existed. The Login facet now folds failed
+  attempts and their origins into the answer, and can be satisfied by btmp alone.
 - **Syslog auth collector (`auth`).** Reads `/var/log/auth.log` (Debian/Ubuntu)
   and `/var/log/secure` (RHEL), so hosts **without auditd** still answer Login,
   Privilege, Accounts, and sudo-invoked Commands/Root-activity, and attribute

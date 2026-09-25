@@ -10,6 +10,7 @@ from typing import List
 from openpath.sources.auditd import AuditdCollector
 from openpath.sources.auth import SyslogAuthCollector
 from openpath.sources.base import CollectResult, Collector
+from openpath.sources.btmp import BtmpCollector
 from openpath.sources.journal_sshd import SshdJournalCollector
 from openpath.sources.packages import PackageCollector
 from openpath.sources.wtmp import WtmpCollector
@@ -18,6 +19,7 @@ from openpath.sources.wtmp import WtmpCollector
 def default_collectors() -> List[Collector]:
     return [
         WtmpCollector(),
+        BtmpCollector(),
         SshdJournalCollector(),
         AuditdCollector(),
         SyslogAuthCollector(),
@@ -29,6 +31,7 @@ __all__ = [
     "Collector",
     "CollectResult",
     "WtmpCollector",
+    "BtmpCollector",
     "SshdJournalCollector",
     "AuditdCollector",
     "SyslogAuthCollector",

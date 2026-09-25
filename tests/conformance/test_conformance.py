@@ -619,6 +619,62 @@ class TestStreaming(Base):
         self.assertEqual(f.events[0].attrs.get("as_root"), True)
 
 
+class TestFailedLogins(Base):
+    """btmp failed-login attempts answer 'who tried and failed to log in as X,
+    and from where' -- part of Login (family 4)."""
+
+    def test_failed_attempts_surface_with_origin(self):
+        root = self.make_root()
+        h = HostBuilder(root).no_auditd()
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.login("alice", ago(hours=3), host="203.0.113.7", until=ago(hours=1))
+        h.failed_login("alice", ago(hours=2, minutes=30), host="45.9.9.9")
+        h.failed_login("alice", ago(hours=2, minutes=29), host="45.9.9.9")
+        h.write()
+        f = self.finding(root, "alice", "login")
+        self.assertIn("2 failed attempt(s)", f.summary)
+        self.assertIn("45.9.9.9", f.summary)
+
+    def test_failed_attempts_for_never_existed_user(self):
+        root = self.make_root()
+        h = HostBuilder(root).no_auditd()
+        h.passwd("root", 0)
+        h.failed_login("admin", ago(hours=2), host="185.1.1.1")
+        h.failed_login("admin", ago(hours=1), host="185.1.1.1")
+        h.write()
+        r = self.result(root, "admin", "login")
+        self.assertFalse(r.subject.exists_now)
+        self.assertIn("2 failed attempt(s)", r.finding.summary)
+
+    def test_btmp_only_host_reports_failures_but_discloses_success_gap(self):
+        # No wtmp, no auditd, no auth.log -- only btmp exists. btmp evidences
+        # FAILURES only, so successful logins cannot be confirmed (a gap), yet the
+        # failed attempts are still reported.
+        root = self.make_root()
+        h = HostBuilder(root).no_auditd()
+        h.passwd("root", 0).passwd("bob", 1002)
+        h.failed_login("bob", ago(hours=2), host="10.0.0.5")
+        h.write()
+        f = self.finding(root, "bob", "login")
+        self.assertTrue(any(g.question == "Login" for g in f.gaps))  # can't confirm success
+        self.assertIn("failed attempt", f.summary)
+        self.assertIn("10.0.0.5", f.summary)
+
+    def test_failed_ssh_not_double_counted_across_btmp_and_authlog(self):
+        # The same failed SSH login is in btmp AND auth.log; count it once.
+        root = self.make_root()
+        h = HostBuilder(root).no_auditd()
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.login("alice", ago(hours=3), host="10.0.0.2", until=ago(hours=1))  # wtmp
+        h.auth_ssh_fail("alice", "45.9.9.9", ago(hours=2))       # auth.log failure
+        h.failed_login("alice", ago(hours=2), host="45.9.9.9")   # same, in btmp
+        h.write()
+        f = self.finding(root, "alice", "login")
+        self.assertIn("1 failed attempt(s)", f.summary)
+        # the successful-login origin is not polluted by the failed source
+        self.assertNotIn("45.9.9.9;", f.summary.split("failed")[0])
+
+
 class TestSyslogAuth(Base):
     """Debian/Ubuntu hosts without auditd: sudo/ssh/su/account events from
     /var/log/auth.log make Privilege, Login, Accounts, and sudo-Commands

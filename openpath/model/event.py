@@ -145,6 +145,8 @@ class Event:
             return ("session", f"{a.get('line') or 'tty'} from {a.get('origin') or 'local'}")
         if t is EventType.SSH_AUTH:
             return ("ssh-origin", str(a.get("ip") or "?"))
+        if t is EventType.LOGIN:
+            return ("login-origin", str(a.get("origin") or "local"))
         if t is EventType.BOOT:
             return ("system", "boot")
         return ("event", self.summary)

@@ -69,6 +69,33 @@ class _Record:
         self.raw = raw
 
 
+def parse_utmp_bytes(data: bytes, rel: str) -> List["_Record"]:
+    """Parse raw utmp/wtmp/btmp bytes into records (all share the format)."""
+    records: List[_Record] = []
+    n = len(data) // _UTMP_SIZE
+    for i in range(n):
+        chunk = data[i * _UTMP_SIZE : (i + 1) * _UTMP_SIZE]
+        (
+            ut_type, ut_pid, ut_line, ut_id, ut_user, ut_host,
+            _term, _exit, _session, tv_sec, tv_usec,
+            _a0, _a1, _a2, _a3, _unused,
+        ) = _UTMP_STRUCT.unpack(chunk)
+        if ut_type == EMPTY:
+            continue
+        ts = None
+        if tv_sec:
+            ts = datetime.fromtimestamp(tv_sec + tv_usec / 1_000_000, tz=timezone.utc)
+        user = _cstr(ut_user)
+        host = _cstr(ut_host)
+        line = _cstr(ut_line)
+        raw = (f"type={ut_type} pid={ut_pid} line={line!r} "
+               f"user={user!r} host={host!r} "
+               f"time={ts.isoformat() if ts else 'none'}")
+        records.append(_Record(ut_type, ut_pid, line, _cstr(ut_id), user, host,
+                               ts, f"{rel}#{i}", raw))
+    return records
+
+
 class WtmpCollector(Collector):
     source_id = "wtmp"
 
@@ -84,34 +111,7 @@ class WtmpCollector(Collector):
                 data = p.read_bytes()
             except OSError:
                 continue
-            n = len(data) // _UTMP_SIZE
-            for i in range(n):
-                chunk = data[i * _UTMP_SIZE : (i + 1) * _UTMP_SIZE]
-                (
-                    ut_type, ut_pid, ut_line, ut_id, ut_user, ut_host,
-                    _term, _exit, _session, tv_sec, tv_usec,
-                    a0, a1, a2, a3, _unused,
-                ) = _UTMP_STRUCT.unpack(chunk)
-                if ut_type == EMPTY:
-                    continue
-                ts = None
-                if tv_sec:
-                    ts = datetime.fromtimestamp(
-                        tv_sec + tv_usec / 1_000_000, tz=timezone.utc
-                    )
-                user = _cstr(ut_user)
-                host = _cstr(ut_host)
-                line = _cstr(ut_line)
-                locator = f"{rel}#{i}"
-                raw = (
-                    f"type={ut_type} pid={ut_pid} line={line!r} "
-                    f"user={user!r} host={host!r} "
-                    f"time={ts.isoformat() if ts else 'none'}"
-                )
-                records.append(
-                    _Record(ut_type, ut_pid, line, _cstr(ut_id), user, host,
-                            ts, locator, raw)
-                )
+            records.extend(parse_utmp_bytes(data, rel))
         return records, locations
 
     def collect(self, env: Env, window: TimeRange) -> CollectResult:

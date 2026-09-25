@@ -59,7 +59,7 @@ limit is stated.
 | 1  | Core            | all facets federated                               |
 | 2  | Timeline        | time-ordered, federated factset                    |
 | 3  | Sessions        | wtmp                                               |
-| 4  | Login           | wtmp + sshd journal                                |
+| 4  | Login           | wtmp + sshd journal + btmp (failed attempts)       |
 | 5  | Privilege       | auditd USER_CMD / USER_START                       |
 | 6  | Root activity   | auditd SYSCALL+EXECVE (uid/euid 0)                 |
 | 7  | Commands        | auditd EXECVE (user / switched / root)             |

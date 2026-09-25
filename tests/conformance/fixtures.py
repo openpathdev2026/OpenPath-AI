@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from openpath.sources.wtmp import (
-    _UTMP_STRUCT, BOOT_TIME, DEAD_PROCESS, USER_PROCESS,
+    _UTMP_STRUCT, BOOT_TIME, DEAD_PROCESS, LOGIN_PROCESS, USER_PROCESS,
 )
 
 # x86-64 syscall numbers used by fixtures.
@@ -70,6 +70,7 @@ class HostBuilder:
         self.tz = tz
         self._wtmp: List[bytes] = []
         self._wtmp_prev: List[bytes] = []
+        self._btmp: List[bytes] = []
         self._audit: List[str] = []
         self._audit_prev: List[str] = []
         self._dnf: List[str] = []
@@ -134,6 +135,11 @@ class HostBuilder:
 
     def boot(self, at, kernel="6.0.0"):
         self._wtmp.append(self._pack(BOOT_TIME, 0, "~", "reboot", kernel, at))
+        return self
+
+    def failed_login(self, user, at, host="", line="ssh:notty", pid=0):
+        """A failed login attempt, recorded in btmp (same utmp binary format)."""
+        self._btmp.append(self._pack(LOGIN_PROCESS, pid, line, user, host, at))
         return self
 
     # -- sshd journal ------------------------------------------------------- #
@@ -362,6 +368,9 @@ class HostBuilder:
             (self.root / "var/log/wtmp.1").write_bytes(b"".join(self._wtmp_prev))
         if self._wtmp:
             (self.root / "var/log/wtmp").write_bytes(b"".join(self._wtmp))
+        if self._btmp:
+            (self.root / "var/log").mkdir(parents=True, exist_ok=True)
+            (self.root / "var/log/btmp").write_bytes(b"".join(self._btmp))
         if self.auditd_present:
             if self._audit_prev:
                 (self.root / "var/log/audit/audit.log.1").write_text(
