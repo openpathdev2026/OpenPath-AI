@@ -44,7 +44,9 @@ class PrivilegeFacet(Facet):
     # Privilege escalation is recorded by auditd (USER_CMD/USER_START) or by syslog
     # (sudo/su lines in auth.log/secure) -- either answers the question.
     requirements = (
-        AnyOf("Privilege", [("auditd", "auditd rules loaded"), ("auth", None)]),
+        AnyOf("Privilege", [("auditd", "auditd rules loaded"), ("auth", None)],
+              remedy="run auditd (load contrib/openpath.rules) or ensure "
+                     "/var/log/auth.log (or /var/log/secure) is present"),
     )
 
     def analyze(self, ctx: AnalysisContext) -> Finding:

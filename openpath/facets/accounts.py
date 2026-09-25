@@ -31,7 +31,9 @@ class AccountsFacet(Facet):
     # emitted whenever auditd runs) or by syslog (useradd/groupadd lines).
     requirements = (
         AnyOf("Accounts/groups",
-              [("auditd", "auditd rules loaded"), ("auth", None)]),
+              [("auditd", "auditd rules loaded"), ("auth", None)],
+              remedy="run auditd (load contrib/openpath.rules) or ensure "
+                     "/var/log/auth.log (or /var/log/secure) is present"),
     )
 
     def analyze(self, ctx: AnalysisContext) -> Finding:

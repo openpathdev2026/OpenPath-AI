@@ -43,7 +43,21 @@ It discloses what syslog cannot capture: **non-sudo command execution** and **fi
 / network activity** still require an auditd execve/watch rule. When both auditd
 and syslog are present, auditd is authoritative and duplicates are dropped.
 
-## 3. Run
+## 3. Check host readiness
+
+Before relying on a host, see which of the 13 questions it is instrumented to
+answer — no subject required:
+
+```
+openpath-ai --coverage
+openpath-ai --coverage --format json    # for automation / fleet inventory
+```
+
+It lists each family as answerable or blind, with the exact remedy for each gap,
+plus every source's status and retention horizon. Use it to verify a host after
+loading `contrib/openpath.rules`.
+
+## 4. Run
 
 Ask a question (natural language, or explicit flags):
 
@@ -66,7 +80,7 @@ JSON for pipelines / SIEM ingestion:
 openpath-ai --user alice --facet core --format json
 ```
 
-## 4. Offline analysis (evidence bundles)
+## 5. Offline analysis (evidence bundles)
 
 Capture a host's evidence into a portable bundle and analyze it elsewhere — the
 same collectors run against the bundle unchanged:
@@ -79,7 +93,7 @@ openpath-ai --data-root /tmp/host-evidence --all-users --window "last 24 hours"
 Use `--now <timestamp>` and `--tz <IANA zone>` for deterministic, reproducible
 analysis of a captured bundle.
 
-## 5. Validate on a real instrumented host
+## 6. Validate on a real instrumented host
 
 The synthetic conformance suite proves correctness for arbitrary users. To confirm
 against a live, rule-loaded auditd host (a real VM, not an unprivileged container —

@@ -6,6 +6,11 @@ based on Keep a Changelog; dates are UTC.
 ## [Unreleased]
 
 ### Added
+- **Host readiness self-check (`--coverage`).** Reports, independent of any user,
+  which of the 13 questions the host is instrumented to answer over the window,
+  which are blind, and the exact remedy for each gap, plus every source's status
+  and retention horizon. Text and JSON. Turns the "readiness baseline" idea into a
+  runtime operator tool.
 - **Failed-login evidence (`btmp`).** Reads `/var/log/btmp` (the source behind
   `lastb`, same `struct utmp` binary format as wtmp) so the Login question also
   answers "who tried and failed to log in as <user>, and from where" — including

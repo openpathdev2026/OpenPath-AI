@@ -44,7 +44,9 @@ class SessionsFacet(Facet):
     name = "sessions"
     question_family = "Sessions"
     requirements = (
-        Requirement("wtmp", "Sessions", instrument="wtmp accounting present"),
+        Requirement("wtmp", "Sessions", instrument="wtmp accounting present",
+                    remedy="enable login accounting so /var/log/wtmp records "
+                           "sessions (session intervals are wtmp-only)"),
     )
 
     def analyze(self, ctx: AnalysisContext) -> Finding:
@@ -91,7 +93,9 @@ class LoginFacet(Facet):
     # present btmp would license a false "no logins" for a login it cannot see).
     requirements = (
         AnyOf("Login", [("wtmp", "wtmp accounting present"),
-                        ("journal.sshd", None), ("auth", None)]),
+                        ("journal.sshd", None), ("auth", None)],
+              remedy="ensure login accounting (wtmp), an sshd journal, or "
+                     "/var/log/auth.log is present"),
     )
 
     def analyze(self, ctx: AnalysisContext) -> Finding:

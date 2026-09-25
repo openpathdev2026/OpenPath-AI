@@ -27,7 +27,12 @@ from openpath.engine import Engine
 from openpath.env import Env
 from openpath.facets import FAMILIES, get_spec
 from openpath.model.timerange import TimeParseError, build_range, parse_instant
-from openpath.render import render_json, render_text
+from openpath.render import (
+    render_json,
+    render_readiness,
+    render_readiness_json,
+    render_text,
+)
 from openpath import router
 
 
@@ -68,6 +73,9 @@ def build_parser() -> argparse.ArgumentParser:
                         "(local accounts + anyone seen in the evidence)")
     p.add_argument("--include-inactive", action="store_true",
                    help="with --all-users, also show users with no recorded activity")
+    p.add_argument("--coverage", action="store_true",
+                   help="report which of the 13 questions this host can answer "
+                        "(no subject needed) and exit")
     p.add_argument("--version", action="version", version=f"openpath-ai {__version__}")
     return p
 
@@ -89,9 +97,10 @@ def main(argv: Optional[list] = None) -> int:
             print(f"{spec.number:2d}  {spec.name:14s} {spec.label}")
         return 0
 
-    if not args.all_users and not args.question and not (args.facet and args.user):
+    if (not args.coverage and not args.all_users and not args.question
+            and not (args.facet and args.user)):
         print("error: provide a question, or both --facet and --user, "
-              "or --all-users", file=sys.stderr)
+              "or --all-users, or --coverage", file=sys.stderr)
         return 2
 
     tz = _resolve_tz(args.tz)
@@ -100,6 +109,20 @@ def main(argv: Optional[list] = None) -> int:
         else datetime.now(timezone.utc)
     )
     env = Env(data_root=Path(args.data_root), now=now, local_tz=tz)
+
+    # Host readiness: which of the 13 questions can this host answer?
+    if args.coverage:
+        try:
+            window = _resolve_window(args, env)
+        except (TimeParseError, ValueError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        report = Engine().readiness(env, window)
+        if args.format == "json":
+            print(render_readiness_json(report))
+        else:
+            print(render_readiness(report))
+        return 0
 
     # Multi-user sweep: "track all that activity for every user".
     if args.all_users:

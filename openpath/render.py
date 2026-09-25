@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from typing import List
 
-from openpath.engine import AnalysisResult
+from openpath.engine import AnalysisResult, ReadinessReport
 from openpath.narrate import narrate_finding
 
 # Facets that are overviews/ledgers rather than a stream of activity.
@@ -46,6 +46,44 @@ def render_json(result: AnalysisResult) -> str:
         "coverage": result.ledger.to_dict(),
     }
     return json.dumps(payload, indent=2, sort_keys=False)
+
+
+def render_readiness_json(report: ReadinessReport) -> str:
+    return json.dumps(report.to_dict(), indent=2, sort_keys=False)
+
+
+def render_readiness(report: ReadinessReport) -> str:
+    """Operator-facing host readiness report."""
+    lines: List[str] = []
+    lines.append("=" * 72)
+    lines.append("OpenPath | Host readiness")
+    lines.append(f"Window  : {report.window.describe()}")
+    lines.append(f"Answerable: {report.answerable} of {report.data_total} data "
+                 f"questions (+ {len(report.families) - report.data_total} "
+                 f"aggregate views)")
+    lines.append("=" * 72)
+    lines.append("")
+    lines.append("QUESTION FAMILIES")
+    for fr in report.families:
+        mark = "agg" if fr.kind == "aggregate" else ("OK " if fr.answerable else "-- ")
+        lines.append(f"  [{mark}] {fr.number:2d} {fr.label}")
+        for g in fr.gaps:
+            lines.append(f"           needs: {g.reason}")
+            if g.remedy:
+                lines.append(f"           remedy: {g.remedy}")
+    lines.append("")
+    lines.append("SOURCES")
+    for cov in report.ledger.sources:
+        horizon = (f"{cov.horizon_start.isoformat()} .. {cov.horizon_end.isoformat()}"
+                   if cov.horizon_start and cov.horizon_end else "n/a")
+        lines.append(f"  {cov.source_id:14s} {cov.status.value:14s} "
+                     f"records={cov.record_count}  retained {horizon}")
+        for ic in cov.instrumentation:
+            if not ic.present:
+                lines.append(f"       - off: {ic.name}"
+                             + (f" ({ic.detail})" if ic.detail else ""))
+    lines.append("")
+    return "\n".join(lines)
 
 
 def render_text(result: AnalysisResult, *, verbose: bool = False) -> str:

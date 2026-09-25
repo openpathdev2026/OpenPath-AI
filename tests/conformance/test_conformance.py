@@ -814,6 +814,59 @@ class TestSyslogAuth(Base):
         self.assertEqual(f.events[0].source_id, "auditd")
 
 
+class TestReadiness(Base):
+    """The host readiness self-check reports which questions are answerable."""
+
+    def _rd(self, root):
+        return Engine().readiness(self.env(root), self.win())
+
+    def _by_label(self, report):
+        return {fr.label: fr.answerable for fr in report.families}
+
+    def test_fully_instrumented_answers_all(self):
+        report = self._rd(self.fully_instrumented())
+        # all substantive data questions answerable (aggregates not counted)
+        self.assertEqual(report.answerable, report.data_total)
+        self.assertEqual(report.data_total, 9)
+
+    def test_debian_host_blind_on_files_and_network_only(self):
+        root = self.make_root()
+        h = HostBuilder(root).no_auditd()
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.boot(ago(hours=10))
+        h.login("alice", ago(hours=3), host="10.0.0.5", until=ago(hours=1))
+        h.auth_sudo("alice", "/usr/bin/apt update", ago(hours=2))
+        h.write()
+        by = self._by_label(self._rd(root))
+        self.assertFalse(by["Files"])
+        self.assertFalse(by["Network"])
+        self.assertTrue(by["Privilege"])
+        self.assertTrue(by["Login"])
+        self.assertTrue(by["Accounts/groups"])
+
+    def test_bare_host_only_aggregates_answerable(self):
+        root = self.make_root()
+        h = HostBuilder(root).no_auditd()
+        h.passwd("root", 0)
+        h.write()
+        by = self._by_label(self._rd(root))
+        self.assertTrue(by["Core"])       # aggregates -- always runs
+        self.assertTrue(by["Gaps"])
+        self.assertFalse(by["Files"])
+        self.assertFalse(by["Commands"])
+
+    def test_report_has_remedies_for_blind_families(self):
+        root = self.make_root()
+        h = HostBuilder(root).no_auditd()
+        h.passwd("root", 0)
+        h.write()
+        report = self._rd(root)
+        blind = [fr for fr in report.families if not fr.answerable]
+        self.assertTrue(blind)
+        # at least one blind family carries an actionable remedy
+        self.assertTrue(any(g.remedy for fr in blind for g in fr.gaps))
+
+
 class TestSerialization(Base):
     def test_json_and_text_render(self):
         root = self.fully_instrumented()
