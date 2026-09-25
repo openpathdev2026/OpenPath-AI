@@ -160,8 +160,9 @@ and windows.
 
 ## Known limitations (disclosed, by design)
 
-- auditd syscall-number decoding is x86-64; other architectures need a per-arch
-  table (the `arch=` field is surfaced on every event).
+- auditd syscall numbers are decoded per the record's `arch=` field; x86-64,
+  aarch64 and riscv64 are mapped today (32-bit arm/i386 can be added the same
+  way). The resolved syscall name is surfaced on every event.
 - Natural-language parsing of the question is best-effort; `--user`, `--facet`,
   and `--window`/`--since`/`--until` are the authoritative inputs.
 - Directory-managed users (LDAP/SSSD) not present in local `passwd` are resolved

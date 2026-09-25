@@ -51,9 +51,11 @@ _TYPE_RE = re.compile(r"\btype=(\S+)")
 
 _UNSET_AUID = 4294967295  # (uint32)-1, an unset loginuid
 
-# x86-64 syscall numbers we interpret. (Other arches differ; the SYSCALL record
-# also carries arch=, which we surface, and a per-arch table can be added.)
-_SYSCALLS = {
+# Syscall numbers are architecture-specific, so we resolve them against the
+# SYSCALL record's own arch= field rather than assuming one machine. The category
+# sets below are keyed by *name*, so every facet works across architectures once
+# the number is resolved. Add another arch by adding its number->name table.
+_SYSCALLS_X86_64 = {
     59: "execve", 322: "execveat",
     42: "connect", 49: "bind", 50: "listen", 43: "accept", 288: "accept4",
     2: "open", 257: "openat", 437: "openat2",
@@ -65,6 +67,35 @@ _SYSCALLS = {
     86: "link", 265: "linkat", 88: "symlink", 266: "symlinkat",
     133: "mknod", 259: "mknodat",
 }
+# aarch64 (and other new arches) use the asm-generic table: only the *at variants
+# exist -- no legacy open/creat/chmod/chown/unlink/rename/link/symlink/mknod.
+_SYSCALLS_GENERIC = {
+    221: "execve", 281: "execveat",
+    203: "connect", 200: "bind", 201: "listen", 202: "accept", 242: "accept4",
+    56: "openat", 437: "openat2",
+    35: "unlinkat",
+    38: "renameat", 276: "renameat2",
+    53: "fchmodat", 52: "fchmod",
+    54: "fchownat", 55: "fchown",
+    45: "truncate", 46: "ftruncate",
+    37: "linkat", 36: "symlinkat",
+    33: "mknodat",
+}
+# AUDIT_ARCH_* values as they appear (hex) in the audit log's arch= field.
+_ARCH_TABLES = {
+    "c000003e": _SYSCALLS_X86_64,   # AUDIT_ARCH_X86_64
+    "c00000b7": _SYSCALLS_GENERIC,  # AUDIT_ARCH_AARCH64
+    "c00000f3": _SYSCALLS_GENERIC,  # AUDIT_ARCH_RISCV64
+}
+
+
+def _syscall_name(arch_hex, num):
+    if num is None:
+        return None
+    table = _ARCH_TABLES.get((arch_hex or "").lower(), _SYSCALLS_X86_64)
+    return table.get(num, _SYSCALLS_X86_64.get(num, str(num)))
+
+
 _EXEC_SYSCALLS = {"execve", "execveat"}
 _NET_SYSCALLS = {"connect", "bind", "listen", "accept", "accept4"}
 _FILE_WRITE_SYSCALLS = {
@@ -394,7 +425,7 @@ class AuditdCollector(Collector):
         if sfields is None:
             return []
         sysno = _int(sfields, "syscall")
-        sysname = _SYSCALLS.get(sysno, str(sysno))
+        sysname = _syscall_name(sfields.get("arch"), sysno)
         auid = _auid(sfields)
         uid = _int(sfields, "uid")
         euid = _int(sfields, "euid")

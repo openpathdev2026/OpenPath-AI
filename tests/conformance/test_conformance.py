@@ -529,6 +529,27 @@ class TestMultiUserSweep(Base):
         self.assertNotIn("vim", bob_cmds)
 
 
+class TestMultiArch(Base):
+    """Syscalls must be decoded per the record's arch, so exec/network/file
+    questions work on ARM64 hosts, not just x86-64."""
+
+    def test_aarch64_exec_is_decoded(self):
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.enable_execve()
+        h.boot(ago(hours=10))
+        # execve on aarch64 is syscall 221, arch c00000b7 -- would be misread as a
+        # different call under an x86-64-only table.
+        h.exec(1001, 1001, ["deploy.sh"], "/usr/local/bin/deploy.sh",
+               ago(hours=2), arch="aarch64")
+        h.write()
+        f = self.finding(root, "alice", "commands")
+        self.assertEqual(len(f.events), 1)
+        self.assertEqual(f.events[0].attrs.get("syscall"), "execve")
+        self.assertIn("deploy.sh", f.events[0].attrs.get("cmdline", ""))
+
+
 class TestSerialization(Base):
     def test_json_and_text_render(self):
         root = self.fully_instrumented()

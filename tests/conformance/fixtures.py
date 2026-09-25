@@ -157,14 +157,16 @@ class HostBuilder:
     # -- auditd syscall events ---------------------------------------------- #
 
     def exec(self, auid, uid, argv, exe, at, cwd="/root", euid=None,
-             key="exec", comm=None):
+             key="exec", comm=None, arch="x86_64"):
         euid = uid if euid is None else euid
         comm = comm or (argv[0] if argv else "prog")
         sid = next(self._serial)
         aid = f"{_epoch_msec(at)}:{sid}"
         keyfield = f' key="{key}"' if key else ""
+        archhex = "c00000b7" if arch == "aarch64" else "c000003e"
+        execno = 221 if arch == "aarch64" else SYS["execve"]
         self._audit.append(
-            f"type=SYSCALL msg=audit({aid}): arch=c000003e syscall={SYS['execve']} "
+            f"type=SYSCALL msg=audit({aid}): arch={archhex} syscall={execno} "
             f"success=yes exit=0 ppid=1000 pid=3{sid} auid={auid} uid={uid} gid=0 "
             f"euid={euid} suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=pts0 ses=3 "
             f'comm="{comm}" exe="{exe}"{keyfield}')
