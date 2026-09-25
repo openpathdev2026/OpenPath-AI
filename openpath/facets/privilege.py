@@ -117,9 +117,11 @@ class PrivilegeFacet(Facet):
                 src = "auditd" if source_met(ctx, "auditd", "auditd rules loaded") \
                     else "auth.log"
                 f.summary = (
-                    f"No, {ctx.subject.username} did not become root in "
-                    f"{ctx.window.label or 'the window'} (no sudo/su and no root "
-                    f"execution recorded; {src} was present)."
+                    f"No sudo/su escalation or root execution by "
+                    f"{ctx.subject.username} was recorded in "
+                    f"{ctx.window.label or 'the window'} ({src} was present) -- an "
+                    f"evidenced negative within the covered evidence scope, not a "
+                    f"claim that no privilege gain of any kind occurred."
                 )
             else:
                 f.summary = f"Cannot determine whether {ctx.subject.username} became root (see gaps)."

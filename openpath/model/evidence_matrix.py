@@ -169,7 +169,7 @@ def assess(spec: EvidenceSpec, ledger: CoverageLedger, finding) -> Assessment:
     partial_hits = [sid for (sid, i) in spec.partial_any_of
                     if ledger_source_met(ledger, sid, i)]
     missing = _missing_non_fatal(spec, ledger, winning)
-    note = _note(conf, winning, missing, degrade, partial_hits)
+    note = _note(conf, winning, missing, degrade, partial_hits, has_events)
     return Assessment(conf, winning, missing, note)
 
 
@@ -187,12 +187,17 @@ def _missing_non_fatal(spec, ledger, winning) -> List[str]:
     return list(dict.fromkeys(out))
 
 
-def _note(conf, winning, missing, degrade, partial_hits) -> str:
+def _note(conf, winning, missing, degrade, partial_hits, has_events=True) -> str:
     if conf is Confidence.UNANSWERABLE:
         return "no source present that records this class of activity -- see gaps"
     if conf is Confidence.CERTIFIED:
         src = ", ".join(sorted({sid for (sid, _i) in (winning or ())})) or "present sources"
         note = src
+        # CERTIFIED means the question's evidence contract is satisfied and the
+        # answer is complete WITHIN that contract -- never "nothing else happened".
+        # Say so explicitly for a negative, which is the case most easily misread.
+        if not has_events:
+            note += "; complete within the covered evidence scope (evidenced negative, not an absolute claim)"
         if missing:
             note += (f"; corroborating source(s) {', '.join(missing)} absent"
                      f" -- do not affect this answer")

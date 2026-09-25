@@ -34,8 +34,11 @@ OpenPath treats the **question**, not the source, as the unit. Every catalog
 question declares which sources are its primary carriers, which are corroboration,
 and what confidence the answer earns from what is present (`openpath/catalog.py`):
 
-- **CERTIFIED** — a primary carrier was present and instrumented; an empty result is
-  a true evidenced negative.
+- **CERTIFIED** — the question's **defined evidence contract is satisfied and the
+  answer is complete within that contract**. It does *not* mean "nothing else
+  happened". A CERTIFIED negative means "no matching activity in the covered
+  evidence scope" (an evidenced negative), never the absolute claim that the user
+  did not do the thing by some path OpenPath does not observe.
 - **PARTIAL** — substantive and cited, but a named scope/coverage gap is disclosed
   (e.g. auth.log only, so non-sudo commands are unseen; a path-scoped file watch;
   a connect-only network rule).
