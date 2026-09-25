@@ -39,6 +39,21 @@ from openpath.sources import Collector, default_collectors
 _AGGREGATE_FACETS = {"core", "timeline", "evidence", "gaps"}
 
 
+def _query_summary(spec, events, who_label: str, family: str) -> str:
+    from openpath.query import ACTOR_SUBJECT, ACTOR_ANY
+    who = (who_label if spec.actor == ACTOR_SUBJECT
+           else "any actor (host-wide)" if spec.actor == ACTOR_ANY
+           else "unattributable actors (no login uid / no named actor)")
+    scope = spec.describe()
+    scope_txt = f" [{scope}]" if scope else ""
+    fam = family.lower()
+    if events:
+        return f"{len(events)} {fam} event(s) for {who}{scope_txt}."
+    return (f"No {fam} events for {who}{scope_txt} were recorded within the covered "
+            f"evidence scope (an evidenced negative -- see CONFIDENCE and GAPS -- "
+            f"not a claim that none occurred by an unobserved path).")
+
+
 def _apply_confidence(finding: Finding, ctx: AnalysisContext) -> None:
     if finding.confidence is not None:
         return  # an aggregate facet already set it
@@ -207,6 +222,42 @@ class Engine:
         return AnalysisResult(
             finding=finding, subject=ctx.subject, ledger=ctx.ledger, context=ctx
         )
+
+    def query(self, env: Env, window: TimeRange, base_facet: str, spec,
+              username: Optional[str] = None) -> AnalysisResult:
+        """Answer a filtered/pivoted projection deterministically over the evidence.
+
+        The query is a filter over the federated event set (provenance preserved:
+        the returned events still carry their citations). Gaps and confidence are
+        INHERITED from the base facet -- we run it to get its honest instrumentation
+        and scope gaps -- so a filtered negative is scoped to both the filter and the
+        evidence actually covered, never a false "nothing happened".
+        """
+        from openpath.query import apply_query, ACTOR_SUBJECT
+        if base_facet in _AGGREGATE_FACETS:
+            # Aggregate facets have no single EvidenceSpec to assess; their
+            # confidence is federated (derive_aggregate). Filtering them would
+            # mislabel confidence, so a query must target a data facet.
+            raise ValueError(
+                f"query filters apply to a data facet, not the aggregate "
+                f"'{base_facet}'; pick a concrete facet (commands, files, "
+                f"accounts, network, ...) or use it unfiltered.")
+        collected = self.collect(env, window)
+        ctx = self.context_for(collected, username or "(host)")
+        facet = get_facet(base_facet)
+        base = facet.analyze(ctx)  # reuse its exact prereq + scope gap disclosure
+
+        f = Finding(
+            facet=base_facet, question_family=facet.question_family,
+            subject_label=(username if spec.actor == ACTOR_SUBJECT else f"({spec.actor})"),
+            window=window,
+        )
+        f.gaps.extend(base.gaps)
+        subject = ctx.subject if spec.actor == ACTOR_SUBJECT else None
+        f.events = apply_query(ctx.events, spec, subject)
+        f.summary = _query_summary(spec, f.events, f.subject_label, facet.question_family)
+        _apply_confidence(f, ctx)
+        return AnalysisResult(finding=f, subject=ctx.subject, ledger=ctx.ledger, context=ctx)
 
     def discover_subjects(self, collected: Collected) -> List[str]:
         """Every user worth analyzing: local accounts plus anyone who appears in

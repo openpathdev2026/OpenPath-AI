@@ -1267,17 +1267,195 @@ class TestSpecConsistency(Base):
             self.assertEqual(spec_for_facet(agg).derived_from, _DATA_FACETS, agg)
 
 
+class TestQueryLayer(Base):
+    """The deterministic query/filter/pivot layer, exercised through the CLI.
+
+    These are the certification tests for the projection questions: they prove
+    provenance (every returned fact is cited), correct auid-centric attribution
+    (no wrong-user / no cross-session contamination), honest scoped negatives
+    (never an absolute claim, never a false negative on an un-instrumented host),
+    inherited confidence/gaps, and the host-wide + unattributable pivots.
+    """
+
+    def _q(self, root, *argv):
+        rc, out = self.cli("--data-root", str(root), "--format", "json", *argv)
+        self.assertEqual(rc, 0, out)
+        return json.loads(out)
+
+    def _busy_host(self):
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001).passwd("bob", 1002)
+        h.enable_execve().enable_network().enable_file_syscalls().watch("/etc", "wa", "etc")
+        # alice: delete an account, chmod /etc/shadow, run curl (non-sudo), connect out
+        h.del_user(1001, "olduser", 1500, ago(hours=3))
+        h.file_change(1001, 0, "chmod", "/etc/shadow", ago(hours=3), key="etc")
+        h.exec(1001, 1001, ["curl", "http://x"], "/usr/bin/curl", ago(hours=3), comm="curl")
+        h.connect(1001, 1001, "10.0.0.9", 443, ago(hours=3))
+        # bob: run a different command, change a file under /home
+        h.exec(1002, 1002, ["python", "app.py"], "/usr/bin/python", ago(hours=2), comm="python")
+        h.file_change(1002, 1002, "creat", "/home/bob/app.py", ago(hours=2))
+        # a daemon (unset loginuid) file change -> unattributable
+        h.file_change(4294967295, 0, "creat", "/var/run/x.pid", ago(hours=1))
+        h.write()
+        return root
+
+    def test_action_filter_positive_is_cited(self):
+        d = self._q(self._busy_host(), "--facet", "accounts", "--user", "alice",
+                    "--action", "del_user")
+        self.assertEqual(d["finding"]["confidence"], "certified")
+        self.assertTrue(d["evidence"], "a positive result must carry evidence")
+        self.assertTrue(all(e["records"] for e in d["evidence"]), "provenance lost")
+        self.assertTrue(any("olduser" in e["object"] for e in d["evidence"]))
+
+    def test_scoped_negative_is_not_absolute(self):
+        d = self._q(self._busy_host(), "--facet", "accounts", "--user", "bob",
+                    "--action", "del_user")
+        self.assertEqual(d["finding"]["events"], [])
+        # An evidenced negative -- scoped, never absolute.
+        self.assertIn("within the covered evidence scope", d["finding"]["summary"])
+        self.assertNotIn("did not", d["finding"]["summary"].lower())
+
+    def test_wrong_user_isolation(self):
+        root = self._busy_host()
+        # bob did not run curl; alice did. bob's filtered query must be empty.
+        db = self._q(root, "--facet", "commands", "--user", "bob", "--contains", "curl")
+        self.assertEqual(db["finding"]["events"], [])
+        # and alice's command query must not contain bob's python.
+        da = self._q(root, "--facet", "commands", "--user", "alice")
+        cmds = " ".join(e["object"] for e in da["evidence"])
+        self.assertIn("curl", cmds)
+        self.assertNotIn("python", cmds)
+
+    def test_path_filter(self):
+        d = self._q(self._busy_host(), "--facet", "files", "--user", "alice",
+                    "--path", "/etc/*")
+        objs = [e["object"] for e in d["evidence"]]
+        self.assertIn("/etc/shadow", objs)
+
+    def test_command_and_non_sudo_filter(self):
+        root = self._busy_host()
+        d = self._q(root, "--facet", "commands", "--user", "alice", "--contains", "curl")
+        self.assertTrue(any("curl" in e["object"] for e in d["evidence"]))
+        # alice's curl was NOT via sudo -> --no-sudo keeps it.
+        d2 = self._q(root, "--facet", "commands", "--user", "alice", "--no-sudo")
+        self.assertTrue(d2["finding"]["events"])
+
+    def test_network_direction_filter(self):
+        d = self._q(self._busy_host(), "--facet", "network", "--user", "alice",
+                    "--direction", "outbound")
+        self.assertTrue(d["finding"]["events"])
+        self.assertTrue(all(e.get("target_kind") == "endpoint"
+                            for e in d["finding"]["events"]))
+
+    def test_host_wide_who_pivot(self):
+        # actor=any, no --user: who changed files under /etc across the host?
+        d = self._q(self._busy_host(), "--facet", "files", "--actor", "any",
+                    "--path", "/etc/*")
+        objs = [e["object"] for e in d["evidence"]]
+        self.assertIn("/etc/shadow", objs)
+
+    def test_unattributable_pivot(self):
+        d = self._q(self._busy_host(), "--facet", "files", "--actor", "unattributable")
+        objs = [e["object"] for e in d["evidence"]]
+        self.assertIn("/var/run/x.pid", objs)          # the daemon file change
+        self.assertNotIn("/etc/shadow", objs)          # alice's is attributable, excluded
+
+    def test_partial_confidence_inherited_from_narrow_watch(self):
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.enable_execve().watch("/etc", "wa", "etc")   # narrow watch, no host-wide rule
+        h.file_change(1001, 1001, "creat", "/etc/cron.d/x", ago(hours=2), key="etc")
+        h.write()
+        d = self._q(root, "--facet", "files", "--user", "alice", "--path", "/etc/*")
+        self.assertEqual(d["finding"]["confidence"], "partial")
+        self.assertTrue(any(g["question"] == "Files" for g in d["finding"]["gaps"]))
+
+    def test_unanswerable_not_false_negative(self):
+        # No auditd and no auth -> a command filter cannot be answered; it must be
+        # UNANSWERABLE, never a false "no matching commands".
+        root = self.make_root()
+        h = HostBuilder(root).no_auditd()
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.boot(ago(hours=10))
+        h.login("alice", ago(hours=3), until=ago(hours=1), host="10.0.0.5")
+        h.write()
+        d = self._q(root, "--facet", "commands", "--user", "alice", "--contains", "curl")
+        self.assertEqual(d["finding"]["confidence"], "unanswerable")
+
+    def test_path_filter_no_boundary_overmatch(self):
+        """Review: `--path /etc` must not match /etcpasswd or /etc-backup."""
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.enable_file_syscalls()
+        h.file_change(1001, 0, "creat", "/etcpasswd", ago(hours=2))   # sibling, NOT under /etc
+        h.file_change(1001, 0, "creat", "/etc/real", ago(hours=2))
+        h.write()
+        d = self._q(root, "--facet", "files", "--user", "alice", "--path", "/etc")
+        objs = [e["object"] for e in d["evidence"]]
+        self.assertIn("/etc/real", objs)
+        self.assertNotIn("/etcpasswd", objs)
+
+    def test_aggregate_facet_query_rejected(self):
+        """Review: a query over an aggregate facet would mislabel confidence, so it
+        must be refused rather than answered with a wrong status."""
+        root = self.make_root()
+        HostBuilder(root).passwd("root", 0).passwd("alice", 1001).write()
+        rc, out = self.cli("--data-root", str(root), "--facet", "core",
+                           "--user", "alice", "--path", "/etc/*")
+        self.assertEqual(rc, 2)  # refused (message on stderr, not captured here)
+
+    def test_contradictory_flags_rejected(self):
+        root = self.make_root()
+        HostBuilder(root).passwd("root", 0).passwd("alice", 1001).write()
+        rc, _ = self.cli("--data-root", str(root), "--facet", "commands",
+                         "--user", "alice", "--as-root", "--not-root")
+        self.assertEqual(rc, 2)
+
+    def test_root_attribution_survives_in_query(self):
+        # alice sudo -> root, deletes an account as root; the query attributes the
+        # root action to alice (auid), and bob's identical query is empty.
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001).passwd("bob", 1002)
+        h.enable_execve()
+        h.su(1001, 0, ago(hours=2))
+        h.exec(1001, 0, ["userdel", "victim"], "/usr/sbin/userdel", ago(hours=2),
+               euid=0, comm="userdel")
+        h.write()
+        d_alice = self._q(root, "--facet", "commands", "--user", "alice",
+                          "--as-root", "--contains", "userdel")
+        self.assertTrue(d_alice["finding"]["events"], "root action not attributed to alice")
+        d_bob = self._q(root, "--facet", "commands", "--user", "bob",
+                        "--as-root", "--contains", "userdel")
+        self.assertEqual(d_bob["finding"]["events"], [], "root action wrongly attributed to bob")
+
+
 class TestProductionContract(Base):
     """The full production contract is honest: CERTIFIED == the wired core, and
     every CONTRACTED question names what it needs and is never silently answered."""
 
-    def test_certified_set_equals_wired_catalog(self):
+    # The ONLY questions allowed to be CERTIFIED beyond the wired 15 are query-layer
+    # questions that have a dedicated proving test in TestQueryLayer. This allowlist
+    # is the guard: flipping any other question to CERTIFIED without a proving test
+    # fails here (prevents silent over-certification).
+    _QUERY_CERTIFIED = {"AC-01", "FS-01", "EX-01", "EX-02", "NW-01", "TM-08"}
+
+    def test_certified_set_is_exactly_the_proven_set(self):
         from openpath.contract import PRODUCTION_CONTRACT, CatalogStatus
         from openpath.catalog import CATALOG
         certified = {q.id for q in PRODUCTION_CONTRACT
                      if q.status is CatalogStatus.CERTIFIED}
-        self.assertEqual(certified, {q.id for q in CATALOG},
-                         "only the wired catalog may be marked CERTIFIED")
+        expected = {q.id for q in CATALOG} | self._QUERY_CERTIFIED
+        self.assertEqual(certified, expected,
+                         "CERTIFIED must be exactly the wired 15 plus the "
+                         "query-layer questions proven in TestQueryLayer")
+        from openpath.facets import get_facet
+        for q in PRODUCTION_CONTRACT:
+            if q.status is CatalogStatus.CERTIFIED:
+                get_facet(q.facet)  # every CERTIFIED entry must be a runnable facet
 
     def test_every_contracted_question_names_what_it_needs(self):
         from openpath.contract import PRODUCTION_CONTRACT, CatalogStatus
@@ -1304,11 +1482,14 @@ class TestProductionContract(Base):
         rc, out = self.cli("--contract")
         self.assertEqual(rc, 0)
         self.assertIn("Production question contract", out)
-        self.assertIn("CERTIFIED 15", out)
         rc, jout = self.cli("--contract", "--format", "json")
         data = json.loads(jout)
-        self.assertEqual(data["counts"]["certified"], 15)
+        # CERTIFIED = the wired 15 + the query-layer questions proven in TestQueryLayer.
+        from openpath.catalog import CATALOG
+        self.assertGreaterEqual(data["counts"]["certified"], len(CATALOG))
         self.assertEqual(data["total"], len(data["questions"]))
+        self.assertEqual(data["counts"]["certified"] + data["counts"]["contracted"],
+                         data["total"])
 
 
 class TestCatalog(Base):

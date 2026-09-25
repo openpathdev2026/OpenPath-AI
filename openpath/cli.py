@@ -60,6 +60,34 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--until", help="range end (any timestamp)")
     p.add_argument("--around", help="pivot timestamp for 'what happened "
                                     "before/after EVENT' (Q13); shows +/-1h around it")
+    # -- deterministic query/filter/pivot layer (composes with --facet/--user) -- #
+    q = p.add_argument_group("query filters (deterministic projections over evidence)")
+    q.add_argument("--actor", choices=["subject", "any", "unattributable"],
+                   default="subject",
+                   help="whose events: the --user subject, ANY actor (host-wide "
+                        "'who did X'), or UNATTRIBUTABLE (no login uid / no name)")
+    q.add_argument("--object", dest="q_object",
+                   help="filter to events whose acted-on object contains this text")
+    q.add_argument("--path", dest="q_paths", action="append", default=[],
+                   help="filter to file paths/objects matching this prefix or glob "
+                        "(repeatable)")
+    q.add_argument("--action", dest="q_actions", action="append", default=[],
+                   help="filter to events with this action/op/tool, e.g. del_user, "
+                        "chmod, sudo (repeatable)")
+    q.add_argument("--contains", dest="q_contains",
+                   help="filter to commands whose cmdline/exe/comm contains this text")
+    q.add_argument("--direction", choices=["outbound", "inbound"],
+                   help="filter network events by direction")
+    q.add_argument("--as-root", dest="q_as_root", action="store_true", default=None,
+                   help="filter to events performed with root privilege")
+    q.add_argument("--not-root", dest="q_not_root", action="store_true",
+                   help="filter to events NOT performed as root")
+    q.add_argument("--via-sudo", dest="q_via_sudo", action="store_true", default=None,
+                   help="filter to sudo-invoked events")
+    q.add_argument("--no-sudo", dest="q_no_sudo", action="store_true",
+                   help="filter to non-sudo events")
+    q.add_argument("--source", dest="q_sources", action="append", default=[],
+                   help="filter to a specific evidence source id (repeatable)")
     p.add_argument("--data-root", default="/",
                    help="filesystem root for sources (default '/'; use an evidence "
                         "bundle dir for offline analysis)")
@@ -87,6 +115,44 @@ def build_parser() -> argparse.ArgumentParser:
                         "(no subject needed) and exit")
     p.add_argument("--version", action="version", version=f"openpath-ai {__version__}")
     return p
+
+
+def _facet_event_types(facet_name):
+    """Default event types a facet reasons over (so a query inherits its scope)."""
+    from openpath.model.event import EventType as E
+    return {
+        "sessions": (E.SESSION,), "login": (E.SESSION, E.SSH_AUTH, E.LOGIN),
+        "privilege": (E.PRIVILEGE_ESCALATION, E.SESSION),
+        "root_activity": (E.EXEC, E.FILE_CHANGE, E.NETWORK),
+        "commands": (E.EXEC,), "files": (E.FILE_CHANGE,),
+        "accounts": (E.ACCOUNT_CHANGE,), "groups": (E.GROUP_CHANGE,),
+        "packages": (E.PACKAGE_CHANGE,), "network": (E.NETWORK,),
+    }.get(facet_name, ())
+
+
+def _query_flags_present(args) -> bool:
+    return bool(args.q_object or args.q_paths or args.q_actions or args.q_contains
+                or args.direction or args.q_as_root or args.q_not_root
+                or args.q_via_sudo or args.q_no_sudo or args.q_sources
+                or args.actor != "subject")
+
+
+def _build_query_spec(args, facet_name):
+    from openpath.query import QuerySpec
+    as_root = True if args.q_as_root else (False if args.q_not_root else None)
+    via_sudo = True if args.q_via_sudo else (False if args.q_no_sudo else None)
+    return QuerySpec(
+        types=_facet_event_types(facet_name),
+        sources=tuple(args.q_sources),
+        actor=args.actor,
+        object_contains=args.q_object or "",
+        object_paths=tuple(args.q_paths),
+        command_contains=args.q_contains or "",
+        actions=tuple(args.q_actions),
+        direction=args.direction or "",
+        as_root=as_root,
+        via_sudo=via_sudo,
+    )
 
 
 def _resolve_window(args, env):
@@ -128,10 +194,13 @@ def main(argv: Optional[list] = None) -> int:
             print(render_contract(PRODUCTION_CONTRACT))
         return 0
 
+    query_mode = _query_flags_present(args)
     if (not args.coverage and not args.all_users and not args.question
-            and not (args.facet and args.user) and not (args.around and args.user)):
+            and not (args.facet and args.user) and not (args.around and args.user)
+            and not (query_mode and args.facet)):
         print("error: provide a question, or both --facet and --user, "
-              "or --all-users, or --coverage", file=sys.stderr)
+              "or --all-users, or --coverage, or --facet with query filters",
+              file=sys.stderr)
         return 2
 
     tz = _resolve_tz(args.tz)
@@ -172,6 +241,49 @@ def main(argv: Optional[list] = None) -> int:
             return 2
         results = Engine().analyze_all(env, window, facet_name)
         return _render_all_users(results, window, facet_name, args)
+
+    # Deterministic query/filter/pivot layer.
+    if query_mode:
+        facet_name = args.facet or (router.route(args.question) if args.question else None)
+        if not facet_name:
+            print("error: query filters require --facet (the evidence family to "
+                  "filter); see --list-families", file=sys.stderr)
+            return 2
+        try:
+            get_spec(facet_name)
+        except KeyError:
+            print(f"error: unknown facet {facet_name!r}; see --list-families",
+                  file=sys.stderr)
+            return 2
+        if args.q_as_root and args.q_not_root:
+            print("error: --as-root and --not-root are contradictory.", file=sys.stderr)
+            return 2
+        if args.q_via_sudo and args.q_no_sudo:
+            print("error: --via-sudo and --no-sudo are contradictory.", file=sys.stderr)
+            return 2
+        username = args.user or (
+            router.extract_user(args.question) if args.question else None)
+        if args.actor == "subject" and not username:
+            print("error: --actor subject (default) needs --user; or pass "
+                  "--actor any / --actor unattributable for a host-wide query.",
+                  file=sys.stderr)
+            return 2
+        try:
+            window = _resolve_window(args, env)
+        except (TimeParseError, ValueError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        spec = _build_query_spec(args, facet_name)
+        try:
+            result = Engine().query(env, window, facet_name, spec, username=username)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        if args.format == "json":
+            print(render_json(result))
+        else:
+            print(render_text(result, verbose=args.verbose))
+        return 0
 
     # Subject.
     username = args.user or (router.extract_user(args.question) if args.question else None)

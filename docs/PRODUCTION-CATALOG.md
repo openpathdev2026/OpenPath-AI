@@ -5,7 +5,7 @@ The full set of user-facing forensic questions OpenPath commits to, each with a
 count is an output of the analysis, not a target. Certification is a property of
 a question, not a limit on which questions exist.
 
-**153 questions** — CERTIFIED 15, CONTRACTED 138.
+**153 questions** — CERTIFIED 21, CONTRACTED 132.
 
 - **CERTIFIED** — wired and proven end-to-end today (see `catalog.py` + the
   conformance suite). Complete *within the covered evidence scope*, never absolute.
@@ -37,14 +37,19 @@ a question, not a limit on which questions exist.
 | Q13 | What did {user} do in the hour before and after a given incident time? | `timeline` | auditd, wtmp, auth, packages, journal.sshd, btmp |
 | Q14 | What evidence supports what {user} did during the window? | `evidence` | auditd, wtmp, journal.sshd, auth, packages, btmp |
 | Q15 | What could OpenPath NOT determine about {user} in this window? | `gaps` | auditd, wtmp, btmp, journal.sshd, auth, packages |
+| AC-01 | Did {user} delete or remove any accounts (anti-forensics, or disabling a defender's account)? | `accounts` | auditd, auth, wtmp |
+| EX-01 | Did {user} run a specific command or binary (curl, wget, nc, base64, a named tool)? | `commands` | auditd(execve audit rule), auth |
+| EX-02 | What ordinary (non-sudo) commands did {user} run? | `commands` | auditd(execve audit rule), wtmp |
+| FS-01 | Did {user} modify sensitive system or authentication config files (/etc/passwd, /etc/shadow, /etc/sudoers(.d), /etc/ssh/sshd_config, /etc/pam.d, cron files)? | `files` | auditd(host-wide file-change rule), auditd(file watch/modify audit rule), wtmp |
+| NW-01 | What outbound network connections did {user} make, and to which destinations and ports? | `network` | auditd(connect audit rule) |
+| TM-08 | What activity on this host cannot be attributed to any human (daemon/service, cron/boot-time, or unset loginuid)? | `core` | auditd, wtmp |
 
 ## CONTRACTED (roadmap)
 
-### Needs: query/filter/pivot subsystem (projection over an existing facet)  (77)
+### Needs: query/filter/pivot layer shipped (openpath/query.py); per-question certification test pending  (71)
 
 | ID | Question | Facet | Blind spots |
 |----|----------|-------|-------------|
-| AC-01 | Did {user} delete or remove any accounts (anti-forensics, or disabling a defender's account)? | accounts | A create-then-delete throwaway is reconstructable only if BOTH records are in-horizon; unattributed on auth-only hosts absent a sudo user... |
 | AC-02 | Did {user} alter an existing account's properties (login shell, home directory, UID, or primary group)? | accounts | auth has NO usermod parser — a non-sudo usermod is invisible on an auth-only host; the specific attribute changed is only in the raw op= ... |
 | AC-03 | Did {user} set or change the password of any account? | accounts | Shows WHOSE (acct) and WHO (auid) but never the value; self-service vs admin reset only by comparing acct to actor; chpasswd/newusers bul... |
 | AC-04 | Did {user} lock or unlock any account? | accounts | ACCT_LOCK/UNLOCK are auditd-only; auth-only sees a lock only if via sudo passwd -l/usermod -L; the account's CURRENT lock state (shadow !... |
@@ -52,8 +57,6 @@ a question, not a limit on which questions exist.
 | AC-06 | Did {user} attempt an account or group change that failed or was denied? | accounts | auth._account/_group hardcode res='success' with no failed-account parser, so the only auth failure signal is a denied sudo of the admin ... |
 | AC-07 | When did {user} make each account/group change, relative to their login and to the incident? | timeline | auth traditional timestamps year-inferred vs auditd epoch-exact, so cross-source ordering within the same second can be ambiguous. |
 | AC-08 | Is the account {user} newly created within the window (and was it subsequently removed)? | accounts | An account created before the retention horizon appears pre-existing; a directory/LDAP account never shows local creation events yet exis... |
-| EX-01 | Did {user} run a specific command or binary (curl, wget, nc, base64, a named tool)? | commands | A tool renamed or invoked via an interpreter (python -c) evades a name filter — match exe path too; no binary hashing so a trojaned same-... |
-| EX-02 | What ordinary (non-sudo) commands did {user} run? | commands | No fallback: on an auth-only host ('full command auditing' always False) ordinary execution is a disclosed blind spot, never a negative. ... |
 | EX-03 | What did {user} run specifically via sudo? | commands | Strong PARTIAL on auth-only (via_sudo EXEC from COMMAND=; denied sudo reported FAILED, never run). sudo policy (who MAY escalate) not mod... |
 | EX-04 | What were the full command-line arguments (argv) of {user}'s commands, not just the binary? | commands | argv from EXECVE only; PROCTITLE (parsed-but-unused) is the omitted fallback, so truncated/self-rewritten argv degrades to exe/comm; env ... |
 | EX-05 | From which working directory (cwd) did {user} run each command? | commands | cwd needs the CWD record in the SYSCALL group; the auth-only synthesized sudo EXEC carries no cwd at all. |
@@ -62,7 +65,6 @@ a question, not a limit on which questions exist.
 | EX-08 | When did {user} run commands — first, last, and the execution timeline? | commands | Traditional auth.log timestamps are year-inferred; rotation/retention truncates the horizon; sub-second ordering relies on the audit serial. |
 | EX-09 | Did {user}'s command executions succeed or fail (and which errored)? | commands | base_attrs.success carries only whether execve() itself succeeded (captured but not surfaced/filtered); the executed PROGRAM's exit code ... |
 | EX-10 | What scripts or interpreted programs did {user} execute (python/bash/perl scripts)? | commands | Interpreter-internal behaviour beyond further execve/audited syscalls is unseen; a script piped via stdin shows argv=[python] with the bo... |
-| FS-01 | Did {user} modify sensitive system or authentication config files (/etc/passwd, /etc/shadow, /etc/sudoers(.d), /etc/ssh/sshd_config, /etc/pam.d, cron files)? | files | Confirms THAT and WHEN and by whom, not WHAT changed inside (no content diff) — a one-line edit and a rewrite look identical. |
 | FS-02 | Did {user} create or drop files in suspicious/transient locations (/tmp, /dev/shm, /var/tmp, web roots, another user's home)? | files | Creation captured; subsequent pure-content writes into the file are not (unless watched); file type/content/hash not captured, so a websh... |
 | FS-03 | Did {user} delete, truncate, or wipe files (data destruction / evidence removal)? | files | Records that a delete/truncate occurred on a path, not the deleted content or prior size; an overwrite via fresh create may surface as CR... |
 | FS-05 | Did {user} weaken file permissions or ownership (chmod/chown) — world-writable, or setuid/setgid? | files | The FACT of a chmod/chown is certified, but the resulting mode bits / new owner (world-writable, setuid, chown-to-root) live in the cited... |
@@ -80,7 +82,6 @@ a question, not a limit on which questions exist.
 | IA-06 | Who accessed this host during the window (all authenticated principals)? | login | Only accounts recorded by modeled carriers appear; daemon/service auth outside sshd invisible; identities name-based (no auid). |
 | IA-07 | Which remote IPs/hosts connected and authenticated to this host? | login | No geo/reputation; local logins have no IP; connections dropped at a firewall never reach these logs (firewall unmodeled). |
 | IA-09 | Did {user} log in at unusual or off-hours times? | login | Login instants are CERTIFIED but 'unusual/off-hours' requires a behavioral baseline the tool does not hold — the anomaly verdict is analy... |
-| NW-01 | What outbound network connections did {user} make, and to which destinations and ports? | network | No bytes/volume, no transport (TCP/UDP), no close/duration; destination is the resolved IP only (never hostname/URL/SNI); AF_UNIX/unknown... |
 | NW-02 | Did {user} connect to a specific known-bad IP, host, or port (IOC match)? | network | Domain-name IOCs are not matchable (only the post-resolution IP:port is recorded) — the indicator must be supplied as an IP; a contact be... |
 | NW-03 | Did {user} exhibit anomalous outbound behavior — beaconing, connection fan-out (scanning), or rare/high ports? | network | Reclassified from the generated CERTIFIED: raw connects are certified but the shipped facet does NOT score beaconing/fan-out/rare-port pa... |
 | NW-05 | What ports or sockets did {user} bind or listen on — any new listeners or backdoors? | network | bind SOCKADDR is the LOCAL bind address, not a remote peer; listen() recorded only with a -S listen rule or if observed; a listener opene... |
@@ -114,7 +115,6 @@ a question, not a limit on which questions exist.
 | TM-04 | When did {user} first and last appear in the window, and how long were they active (dwell time)? | timeline | First/last reflect only recorded, attributable events — earlier activity beyond retention or under a missing rule is not counted; dwell t... |
 | TM-06 | Which of {user}'s recorded actions are attributable to them with high confidence, and how? | core | auid is the only true auid-centric key (survives sudo/su); auth/wtmp/journal.sshd attribute by name; packages by 30-min correlation — eac... |
 | TM-07 | Who is the human responsible for a specific action (a command, file change, connection, or account/group change), across sudo/su? | root_activity | Classifies ESCALATED(auid) / DIRECT_ROOT_LOGIN(origin) / ROOT_NO_SESSION / DAEMON; unset loginuid → unattributable, never guessed; auth-o... |
-| TM-08 | What activity on this host cannot be attributed to any human (daemon/service, cron/boot-time, or unset loginuid)? | core | The root-scope disclosure is CERTIFIED (RootActivityFacet counts and discloses); a comprehensive host-wide rollup of non-root daemon acti... |
 | TM-09 | What is the exact provenance of one fact — which log, offset, and raw record does it come from? | evidence | Provenance is to the parsed record and its locator, not a tamper-evident hash; if the source log was altered before ingest OpenPath canno... |
 | TM-10 | Is this host instrumented to answer forensic questions about {user} over the window (readiness / coverage)? | gaps | Bounded to the modeled catalog and sources; cannot flag missing instrumentation for evidence classes it has no collector for beyond the s... |
 | TM-11 | How far back does the evidence reach for {user} — does coverage actually span the incident time? | gaps | A merely-quiet continuous log is treated as covering (a late first record is not a gap); horizon is per-source; assumes source timestamps... |

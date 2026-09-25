@@ -6,6 +6,30 @@ based on Keep a Changelog; dates are UTC.
 ## [Unreleased]
 
 ### Added
+- **Deterministic query/filter/pivot layer (`openpath/query.py`).** The single
+  highest-leverage capability for the production contract: most projection
+  questions ("did {user} delete an account?", "what files under /etc did they
+  change?", "who did X host-wide?", "what activity is unattributable?") are
+  deterministic filters/pivots over the already-normalized, already-cited event
+  set, not new evidence. `QuerySpec` composes actor selection (subject via the
+  auid-centric matcher / host-wide `any` / `unattributable`), event-type, source,
+  object-path (path-boundary correct), command, action/op, direction, as-root and
+  via-sudo filters; `Engine.query` applies them while INHERITING the base facet's
+  confidence and gaps, so provenance is preserved (every returned fact keeps its
+  citations), negatives stay scoped to the filter AND the evidence covered (never a
+  false "nothing happened"), and an un-instrumented host yields UNANSWERABLE, not a
+  bare negative. Exposed on the shipped path via `--actor/--object/--path/--action/
+  --contains/--direction/--as-root/--not-root/--via-sudo/--no-sudo/--source`.
+  `TestQueryLayer` certifies it through the CLI against the adversarial risks
+  (wrong-user, cross-session, scoped-negative-not-absolute, provenance, host-wide
+  and unattributable pivots, partial/unanswerable inheritance, sudo/root
+  attribution). Adversarial review fixes locked by tests: aggregate-facet queries
+  are refused (they can't be assess()ed), `--path /etc` no longer over-matches
+  `/etcpasswd`, contradictory flags are rejected, and the files facet discloses the
+  in-place-content-edit (open+write) blind spot on every answer. Six contract
+  questions (AC-01, FS-01, EX-01, EX-02, NW-01, TM-08) move CONTRACTED -> CERTIFIED,
+  each with a proving test; the contract test pins the CERTIFIED set so nothing can
+  be silently over-certified.
 - **Production question contract (`openpath/contract.py`, `--contract`).** The
   product's catalog is now the full set of user-facing forensic questions OpenPath
   commits to (153, an output of an evidence-surface analysis, not a target), each

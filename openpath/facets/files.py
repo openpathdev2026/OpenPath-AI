@@ -39,6 +39,16 @@ class FilesFacet(Facet):
                 "only path-scoped file watches are loaded; file changes outside the "
                 "watched paths are not recorded, so this answer is scope-limited.",
                 "auditd", _FILE_REMEDY))
+        # Disclose the write-syscall content blind spot on every answer: metadata
+        # operations (create/delete/rename/chmod/chown/truncate) are captured by the
+        # host-wide rule, but an in-place CONTENT edit (open+write to an existing
+        # file) is recorded only where a file watch (-p w) covers the path. So a
+        # "no changes" negative is scoped to those, never absolute.
+        if source_met(ctx, "auditd", "host-wide file-change rule"):
+            f.notes.append(
+                "Scope: content edits to existing files (open+write) are captured "
+                "only under a file watch (-p w); the host-wide rule records metadata "
+                "operations. A negative is scoped to the covered evidence.")
 
         changes = ctx.subject_events([EventType.FILE_CHANGE])
         f.events = changes
