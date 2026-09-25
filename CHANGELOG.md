@@ -26,10 +26,12 @@ based on Keep a Changelog; dates are UTC.
   attribution). Adversarial review fixes locked by tests: aggregate-facet queries
   are refused (they can't be assess()ed), `--path /etc` no longer over-matches
   `/etcpasswd`, contradictory flags are rejected, and the files facet discloses the
-  in-place-content-edit (open+write) blind spot on every answer. Six contract
-  questions (AC-01, FS-01, EX-01, EX-02, NW-01, TM-08) move CONTRACTED -> CERTIFIED,
-  each with a proving test; the contract test pins the CERTIFIED set so nothing can
-  be silently over-certified.
+  in-place-content-edit (open+write) blind spot on every answer. Ten contract
+  questions (AC-01/03, FS-01/03/05, EX-01/02, NW-01/05, TM-08) move CONTRACTED ->
+  CERTIFIED (25 total), each with a proving test; the contract test pins the
+  CERTIFIED set so nothing can be silently over-certified. CONTRACTED/PARTIAL are
+  temporary build states -- the destination is every legitimate question CERTIFIED
+  by building the missing capability, never by weakening the bar.
 - **Production question contract (`openpath/contract.py`, `--contract`).** The
   product's catalog is now the full set of user-facing forensic questions OpenPath
   commits to (153, an output of an evidence-surface analysis, not a target), each

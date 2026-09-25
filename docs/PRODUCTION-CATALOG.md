@@ -5,7 +5,7 @@ The full set of user-facing forensic questions OpenPath commits to, each with a
 count is an output of the analysis, not a target. Certification is a property of
 a question, not a limit on which questions exist.
 
-**153 questions** — CERTIFIED 21, CONTRACTED 132.
+**153 questions** — CERTIFIED 25, CONTRACTED 128.
 
 - **CERTIFIED** — wired and proven end-to-end today (see `catalog.py` + the
   conformance suite). Complete *within the covered evidence scope*, never absolute.
@@ -38,20 +38,23 @@ a question, not a limit on which questions exist.
 | Q14 | What evidence supports what {user} did during the window? | `evidence` | auditd, wtmp, journal.sshd, auth, packages, btmp |
 | Q15 | What could OpenPath NOT determine about {user} in this window? | `gaps` | auditd, wtmp, btmp, journal.sshd, auth, packages |
 | AC-01 | Did {user} delete or remove any accounts (anti-forensics, or disabling a defender's account)? | `accounts` | auditd, auth, wtmp |
+| AC-03 | Did {user} set or change the password of any account? | `accounts` | auditd, auth |
 | EX-01 | Did {user} run a specific command or binary (curl, wget, nc, base64, a named tool)? | `commands` | auditd(execve audit rule), auth |
 | EX-02 | What ordinary (non-sudo) commands did {user} run? | `commands` | auditd(execve audit rule), wtmp |
 | FS-01 | Did {user} modify sensitive system or authentication config files (/etc/passwd, /etc/shadow, /etc/sudoers(.d), /etc/ssh/sshd_config, /etc/pam.d, cron files)? | `files` | auditd(host-wide file-change rule), auditd(file watch/modify audit rule), wtmp |
+| FS-03 | Did {user} delete, truncate, or wipe files (data destruction / evidence removal)? | `files` | auditd(host-wide file-change rule), auditd(file watch/modify audit rule), wtmp |
+| FS-05 | Did {user} weaken file permissions or ownership (chmod/chown) — world-writable, or setuid/setgid? | `files` | auditd(host-wide file-change rule), auditd(file watch/modify audit rule) |
 | NW-01 | What outbound network connections did {user} make, and to which destinations and ports? | `network` | auditd(connect audit rule) |
+| NW-05 | What ports or sockets did {user} bind or listen on — any new listeners or backdoors? | `network` | auditd(bind audit rule) |
 | TM-08 | What activity on this host cannot be attributed to any human (daemon/service, cron/boot-time, or unset loginuid)? | `core` | auditd, wtmp |
 
 ## CONTRACTED (roadmap)
 
-### Needs: query/filter/pivot layer shipped (openpath/query.py); per-question certification test pending  (71)
+### Needs: query/filter/pivot layer shipped (openpath/query.py); per-question certification test pending  (67)
 
 | ID | Question | Facet | Blind spots |
 |----|----------|-------|-------------|
 | AC-02 | Did {user} alter an existing account's properties (login shell, home directory, UID, or primary group)? | accounts | auth has NO usermod parser — a non-sudo usermod is invisible on an auth-only host; the specific attribute changed is only in the raw op= ... |
-| AC-03 | Did {user} set or change the password of any account? | accounts | Shows WHOSE (acct) and WHO (auid) but never the value; self-service vs admin reset only by comparing acct to actor; chpasswd/newusers bul... |
 | AC-04 | Did {user} lock or unlock any account? | accounts | ACCT_LOCK/UNLOCK are auditd-only; auth-only sees a lock only if via sudo passwd -l/usermod -L; the account's CURRENT lock state (shadow !... |
 | AC-05 | Did {user} add any account (including themselves) to a privileged group such as sudo, wheel, docker, or root? | groups | auth has NO gpasswd/usermod parser (membership grant visible only via a sudo exec); the precise member↔group tuple is only in raw op=/acc... |
 | AC-06 | Did {user} attempt an account or group change that failed or was denied? | accounts | auth._account/_group hardcode res='success' with no failed-account parser, so the only auth failure signal is a denied sudo of the admin ... |
@@ -66,8 +69,6 @@ a question, not a limit on which questions exist.
 | EX-09 | Did {user}'s command executions succeed or fail (and which errored)? | commands | base_attrs.success carries only whether execve() itself succeeded (captured but not surfaced/filtered); the executed PROGRAM's exit code ... |
 | EX-10 | What scripts or interpreted programs did {user} execute (python/bash/perl scripts)? | commands | Interpreter-internal behaviour beyond further execve/audited syscalls is unseen; a script piped via stdin shows argv=[python] with the bo... |
 | FS-02 | Did {user} create or drop files in suspicious/transient locations (/tmp, /dev/shm, /var/tmp, web roots, another user's home)? | files | Creation captured; subsequent pure-content writes into the file are not (unless watched); file type/content/hash not captured, so a websh... |
-| FS-03 | Did {user} delete, truncate, or wipe files (data destruction / evidence removal)? | files | Records that a delete/truncate occurred on a path, not the deleted content or prior size; an overwrite via fresh create may surface as CR... |
-| FS-05 | Did {user} weaken file permissions or ownership (chmod/chown) — world-writable, or setuid/setgid? | files | The FACT of a chmod/chown is certified, but the resulting mode bits / new owner (world-writable, setuid, chown-to-root) live in the cited... |
 | FS-06 | Did {user} rename or move files (masquerading, hiding artifacts, swapping a trojaned binary) — from where to where? | files | The FACT of a rename is certified, but _file_event surfaces a SINGLE target path — the source→dest pair is in the citation (both PATH rec... |
 | FS-07 | Did {user} create symbolic or hard links (link-based evasion, watch bypass, symlink attacks)? | files | The surfaced path may be the link, not its target (single-path limitation); a hard link to a watched file that then bypasses a -w watch i... |
 | FS-08 | What files did {user} modify while acting as root (via sudo/su)? | files | Root file writes with unset loginuid (cron/boot/daemon) are recorded but unattributable — must not be blamed on the user. |
@@ -84,7 +85,6 @@ a question, not a limit on which questions exist.
 | IA-09 | Did {user} log in at unusual or off-hours times? | login | Login instants are CERTIFIED but 'unusual/off-hours' requires a behavioral baseline the tool does not hold — the anomaly verdict is analy... |
 | NW-02 | Did {user} connect to a specific known-bad IP, host, or port (IOC match)? | network | Domain-name IOCs are not matchable (only the post-resolution IP:port is recorded) — the indicator must be supplied as an IP; a contact be... |
 | NW-03 | Did {user} exhibit anomalous outbound behavior — beaconing, connection fan-out (scanning), or rare/high ports? | network | Reclassified from the generated CERTIFIED: raw connects are certified but the shipped facet does NOT score beaconing/fan-out/rare-port pa... |
-| NW-05 | What ports or sockets did {user} bind or listen on — any new listeners or backdoors? | network | bind SOCKADDR is the LOCAL bind address, not a remote peer; listen() recorded only with a -S listen rule or if observed; a listener opene... |
 | NW-07 | What local (UNIX-domain) socket connections did {user} make — e.g. to docker.sock or D-Bus/systemd sockets? | network | Only the socket path is recorded, not the identity of the process listening on the other end; abstract (leading-null) names render awkwar... |
 | NW-13 | Can {user} be affirmatively cleared of network activity (an evidenced negative)? | network | Non-syscall flows (firewall-dropped, DNS-only, proxied web) are out of scope, so the negative is bounded to audited connect/bind syscalls... |
 | PK-01 | What software changed on this host overall during the window, and when — regardless of who did it? | packages | Only dnf.rpm.log and dpkg.log; yum.log/zypper/pacman/snap/flatpak show nothing; horizon bounded by present rotations. |

@@ -1384,6 +1384,44 @@ class TestQueryLayer(Base):
         d = self._q(root, "--facet", "commands", "--user", "alice", "--contains", "curl")
         self.assertEqual(d["finding"]["confidence"], "unanswerable")
 
+    def _ops_host(self):
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001).passwd("bob", 1002)
+        h.enable_execve().enable_network().enable_file_syscalls().watch("/etc", "wa", "etc")
+        h.file_change(1001, 0, "unlink", "/var/log/audit/audit.log", ago(hours=3))  # wipe
+        h.file_change(1001, 0, "chmod", "/etc/shadow", ago(hours=3), key="etc")       # perms
+        h.chauthtok(1001, "bob", 1002, ago(hours=3))                                  # passwd change
+        h.bind(1001, 0, "0.0.0.0", 4444, ago(hours=3))                                 # listener
+        h.write()
+        return root
+
+    def test_certify_fs03_delete_truncate(self):
+        d = self._q(self._ops_host(), "--facet", "files", "--user", "alice",
+                    "--action", "unlink")
+        self.assertTrue(any("audit.log" in e["object"] for e in d["evidence"]))
+        # bob did not delete anything -> scoped negative
+        db = self._q(self._ops_host(), "--facet", "files", "--user", "bob",
+                     "--action", "unlink")
+        self.assertEqual(db["finding"]["events"], [])
+        self.assertIn("within the covered evidence scope", db["finding"]["summary"])
+
+    def test_certify_fs05_chmod_chown(self):
+        d = self._q(self._ops_host(), "--facet", "files", "--user", "alice",
+                    "--action", "chmod")
+        self.assertTrue(any("/etc/shadow" in e["object"] for e in d["evidence"]))
+
+    def test_certify_ac03_password_change(self):
+        d = self._q(self._ops_host(), "--facet", "accounts", "--user", "alice",
+                    "--action", "passwd_change")
+        self.assertTrue(d["finding"]["events"])
+        self.assertTrue(all(e["records"] for e in d["evidence"]))  # provenance
+
+    def test_certify_nw05_inbound_listener(self):
+        d = self._q(self._ops_host(), "--facet", "network", "--user", "alice",
+                    "--direction", "inbound")
+        self.assertTrue(d["finding"]["events"])
+
     def test_path_filter_no_boundary_overmatch(self):
         """Review: `--path /etc` must not match /etcpasswd or /etc-backup."""
         root = self.make_root()
@@ -1441,7 +1479,8 @@ class TestProductionContract(Base):
     # questions that have a dedicated proving test in TestQueryLayer. This allowlist
     # is the guard: flipping any other question to CERTIFIED without a proving test
     # fails here (prevents silent over-certification).
-    _QUERY_CERTIFIED = {"AC-01", "FS-01", "EX-01", "EX-02", "NW-01", "TM-08"}
+    _QUERY_CERTIFIED = {"AC-01", "FS-01", "EX-01", "EX-02", "NW-01", "TM-08",
+                        "FS-03", "FS-05", "AC-03", "NW-05"}
 
     def test_certified_set_is_exactly_the_proven_set(self):
         from openpath.contract import PRODUCTION_CONTRACT, CatalogStatus
