@@ -14,6 +14,26 @@ openpath-ai --user j.doe --window "last 7 days" "what files did j.doe change?"
 
 **Docs:** [Architecture](docs/ARCHITECTURE.md) · [Deployment](docs/DEPLOYMENT.md) · [Changelog](CHANGELOG.md)
 
+Activity is narrated in flowing sentences that name the **object each action was
+performed against**, and every claim is tied to the raw record behind it:
+
+```
+WHAT HAPPENED
+  At 2026-09-25 09:20:00 UTC, alice ran the command `dnf install -y nginx` as root. [E4]
+  At 2026-09-25 09:40:00 UTC, alice modified the file `/etc/hosts` as root. [E7]
+  At 2026-09-25 09:50:00 UTC, alice created the account `deploybot` (uid 1500) as root. [E8]
+
+EVIDENCE  (object acted against -> source record)
+  [E4] command: dnf install -y nginx  <-  auditd var/log/audit/audit.log:2  (+2 more record(s))
+  [E7] file: /etc/hosts               <-  auditd var/log/audit/audit.log:5  (+1 more record(s))
+  [E8] account: deploybot             <-  auditd var/log/audit/audit.log:9
+```
+
+For root, each action is attributed to the base user who escalated — or to a
+direct root login: *"root ran the command `cat /etc/shadow` via a direct root
+login from 198.51.100.5."* Use `--verbose` for the full raw records, or
+`--format json` for structured `narrative` + object-keyed `evidence`.
+
 ## The one idea that makes "100% accuracy" honest
 
 You cannot prove you captured *everything* a user did on a Linux host — there are

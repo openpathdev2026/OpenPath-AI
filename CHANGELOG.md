@@ -3,6 +3,25 @@
 All notable changes to OpenPath-AI are documented here. The format is loosely
 based on Keep a Changelog; dates are UTC.
 
+## [Unreleased]
+
+### Added
+- **Flowing narrative output.** Activity facets now render as flowing sentences
+  that name the actor, the action, and the **object acted against** (file,
+  command, endpoint, account, group, package), each with an `[E#]` evidence
+  marker. A new EVIDENCE section is keyed by that object so a client can trace
+  every claim to its raw record. Root actions are narrated with attribution
+  (via sudo/su, or a direct root login with origin).
+- `Event.target()` — the acted-upon object — surfaced in JSON as
+  `target_kind`/`target`; `render_json` now includes `narrative` and object-keyed
+  `evidence`.
+
+### Changed
+- sshd-journal citations use a relative locator (no absolute bundle path leaked).
+- Streamed package-log reads with incremental horizon/count (bounded memory);
+  audit event groups are carried across rotation boundaries so a split event is
+  reunited; `make test` uses discovery (live suite self-skips via `OPENPATH_LIVE=0`).
+
 ## [0.1.0] — 2026-09-25
 
 First deployable baseline. Answers the 13 forensic question families for any user

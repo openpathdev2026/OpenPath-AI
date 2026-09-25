@@ -135,6 +135,7 @@ class EvidenceFacet(Facet):
         # Every citation behind every claim, grouped by source, de-duplicated.
         by_source: dict = {}
         total = 0
+        seen_events = set()
         for fd in findings:
             for c in fd.citations():
                 by_source.setdefault(c.source_id, [])
@@ -142,9 +143,14 @@ class EvidenceFacet(Facet):
                 if key not in {(x.locator, x.raw) for x in by_source[c.source_id]}:
                     by_source[c.source_id].append(c)
                     total += 1
-            # keep the events so the evidence finding can be rendered/serialized
+            # keep the events so the evidence finding can be rendered/serialized,
+            # de-duplicated (the same event is surfaced by several base facets).
             for e in fd.events:
-                f.events.append(e)
+                locs = tuple(c.locator for c in e.citations)
+                key = (e.ts, e.type, e.target(), locs)
+                if key not in seen_events:
+                    seen_events.add(key)
+                    f.events.append(e)
 
         if total == 0:
             f.summary = (

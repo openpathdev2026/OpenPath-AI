@@ -106,6 +106,49 @@ class Event:
         if self.ts_end is not None:
             self.ts_end = _as_utc(self.ts_end)
 
+    def target(self) -> "tuple[str, str]":
+        """The object this action was performed against: ``(kind, value)``.
+
+        This is the thing a client tracks -- the file changed, the command run,
+        the endpoint contacted, the account/group/package touched. It is derived
+        uniformly from the event so every source exposes the acted-upon object the
+        same way, in the narrative and alongside the evidence.
+        """
+        a = self.attrs
+        t = self.type
+        if t is EventType.EXEC:
+            return ("command", a.get("cmdline") or a.get("exe") or a.get("comm")
+                    or self.summary)
+        if t is EventType.FILE_CHANGE:
+            return ("file", a.get("path") or "?")
+        if t is EventType.NETWORK:
+            ai = a.get("addr_info")
+            if isinstance(ai, dict):
+                if ai.get("family") in ("inet", "inet6"):
+                    return ("endpoint", f"{ai.get('addr')}:{ai.get('port')}")
+                if ai.get("family") == "unix":
+                    return ("endpoint", f"unix:{ai.get('path')}")
+            return ("endpoint", a.get("direction") or "network endpoint")
+        if t is EventType.ACCOUNT_CHANGE:
+            return ("account", a.get("acct")
+                    or (f"uid {a.get('id')}" if a.get("id") is not None else "account"))
+        if t is EventType.GROUP_CHANGE:
+            return ("group", a.get("grp")
+                    or (f"gid {a.get('id')}" if a.get("id") is not None else "group"))
+        if t is EventType.PACKAGE_CHANGE:
+            return ("package", a.get("package") or "?")
+        if t is EventType.PRIVILEGE_ESCALATION:
+            if a.get("cmd"):
+                return ("command", a.get("cmd"))
+            return ("privilege", a.get("tool") or "root")
+        if t is EventType.SESSION:
+            return ("session", f"{a.get('line') or 'tty'} from {a.get('origin') or 'local'}")
+        if t is EventType.SSH_AUTH:
+            return ("ssh-origin", str(a.get("ip") or "?"))
+        if t is EventType.BOOT:
+            return ("system", "boot")
+        return ("event", self.summary)
+
     def to_dict(self) -> Dict[str, Any]:
         d: Dict[str, Any] = {
             "ts": self.ts.isoformat(),
@@ -121,6 +164,9 @@ class Event:
             d["uid"] = self.uid
         if self.actor_name is not None:
             d["actor_name"] = self.actor_name
+        target_kind, target_value = self.target()
+        d["target_kind"] = target_kind
+        d["target"] = target_value
         if self.attrs:
             d["attrs"] = self.attrs
         d["citations"] = [c.to_dict() for c in self.citations]

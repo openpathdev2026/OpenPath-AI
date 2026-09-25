@@ -61,7 +61,18 @@ each subject against the shared event set.
 | `facets/` | One analyzer per question family + `attribution` + Core/Evidence/Gaps aggregators. |
 | `engine.py` | Collect → resolve identity → run facet; single- and multi-user. |
 | `router.py` | Natural-language question → facet + subject + time (convenience). |
+| `narrate.py` | Turns a finding's events into flowing sentences naming the object acted against, plus object-keyed evidence entries. |
 | `render.py` / `cli.py` | Output and the `openpath-ai` entrypoint. |
+
+### Rendering & narration
+
+Activity facets render as flowing prose: each event becomes a sentence naming the
+actor, the action, and the **object acted against** (`Event.target()` → the file,
+command, endpoint, account, group, or package), with an `[E#]` marker. The EVIDENCE
+section is keyed by that object and points at the raw record, so every claim is
+traceable to both its proof and the thing it acted on. Root-activity narration
+credits the base user who escalated, or a direct root login with its origin.
+Aggregator facets (Core, Gaps) keep a structured overview instead.
 
 ## Identity & attribution model
 

@@ -55,8 +55,10 @@ _DISCONNECT_RE = re.compile(
 class SshdJournalCollector(Collector):
     source_id = "journal.sshd"
 
-    def _load_entries(self, env: Env, window: TimeRange) -> Tuple[List[dict], List[str], bool]:
-        """Return (entries, locations, exported_live)."""
+    def _load_entries(
+        self, env: Env, window: TimeRange
+    ) -> Tuple[List[dict], List[str], bool, str]:
+        """Return (entries, locations, exported_live, locator_base)."""
         for rel in _EXPORT_PATHS:
             p = env.path(rel)
             if p.exists():
@@ -80,14 +82,17 @@ class SshdJournalCollector(Collector):
                             break
                         except json.JSONDecodeError:
                             continue
-                return entries, [str(p)], False
+                # Return a relative locator base so evidence never leaks the
+                # analyst's local bundle path.
+                return entries, [str(p)], False, rel
 
         # Live fallback: only when analyzing the real host.
         if str(env.data_root) == "/":
             entries = self._journalctl_live(window)
             if entries is not None:
-                return entries, ["journalctl -u sshd -o json"], True
-        return [], [], False
+                return entries, ["journalctl -u sshd -o json"], True, \
+                    "journalctl:_COMM=sshd"
+        return [], [], False, ""
 
     def _journalctl_live(self, window: TimeRange) -> Optional[List[dict]]:
         try:
@@ -114,7 +119,7 @@ class SshdJournalCollector(Collector):
         return entries
 
     def collect(self, env: Env, window: TimeRange) -> CollectResult:
-        entries, locations, live = self._load_entries(env, window)
+        entries, locations, live, locbase = self._load_entries(env, window)
 
         if not locations:
             cov = SourceCoverage(
@@ -145,7 +150,7 @@ class SshdJournalCollector(Collector):
                     msg = bytes(msg).decode("utf-8", "replace")
                 except (ValueError, TypeError):
                     msg = str(msg)
-            ev = self._interpret(entry, msg, ts, locations[0], i, window)
+            ev = self._interpret(entry, msg, ts, locbase, i, window)
             if ev is not None and window.contains(ev.ts):
                 events.append(ev)
 

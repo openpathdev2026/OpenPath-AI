@@ -63,6 +63,19 @@ class Attribution:
             return "root (loginuid 0, no login session -- cron/boot)"
         return "unattributable (no login uid: system/daemon)"
 
+    def narration(self) -> "tuple[str, str]":
+        """(`actor_display`, `via_phrase`) for a flowing narrative sentence."""
+        if self.kind == ESCALATED and self.named:
+            return (self.actor, "via sudo/su")
+        if self.kind == ESCALATED:  # unresolved login uid
+            return (self.actor, "after escalating (login uid maps to no known account)")
+        if self.kind == DIRECT_ROOT_LOGIN:
+            origin = f" from {self.origin}" if self.origin else ""
+            return ("root", f"via a direct root login{origin}")
+        if self.kind == ROOT_NO_SESSION:
+            return ("root", "as root with no login session (cron/boot)")
+        return ("the system", "as an unattributed daemon (no login uid)")
+
     def to_dict(self) -> dict:
         return {
             "kind": self.kind, "actor": self.actor, "origin": self.origin,

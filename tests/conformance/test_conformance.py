@@ -622,15 +622,80 @@ class TestStreaming(Base):
 class TestSerialization(Base):
     def test_json_and_text_render(self):
         root = self.fully_instrumented()
-        r = self.result(root, "alice", "core")
-        text = render_text(r)
-        self.assertIn("ANSWER", text)
-        self.assertIn("EVIDENCE", text)
-        self.assertIn("GAPS", text)
-        payload = json.loads(render_json(r))
+        # Core is an overview: ANSWER + DETAIL + GAPS.
+        core = render_text(self.result(root, "alice", "core"))
+        self.assertIn("ANSWER", core)
+        self.assertIn("GAPS", core)
+        # An activity facet narrates and cites by object.
+        tl = render_text(self.result(root, "alice", "timeline"))
+        self.assertIn("WHAT HAPPENED", tl)
+        self.assertIn("EVIDENCE", tl)
+        payload = json.loads(render_json(self.result(root, "alice", "core")))
         self.assertEqual(payload["question_family"], "Core")
         self.assertIn("coverage", payload)
         self.assertIn("subject", payload)
+        self.assertIn("narrative", payload)
+
+
+class TestNarration(Base):
+    """Activity is narrated in flowing sentences that name the object acted
+    against, with each claim tied to its evidence."""
+
+    def test_timeline_narrative_names_objects(self):
+        root = self.fully_instrumented()
+        text = render_text(self.result(root, "alice", "timeline"))
+        self.assertIn("WHAT HAPPENED", text)
+        # objects appear in the prose
+        self.assertIn("the file `/etc/hosts`", text)
+        self.assertIn("the account `deploybot`", text)
+        self.assertIn("93.184.216.34:443", text)
+        # evidence is keyed by the object acted against
+        self.assertIn("file: /etc/hosts", text)
+        self.assertIn("account: deploybot", text)
+
+    def test_event_target_is_the_acted_on_object(self):
+        root = self.fully_instrumented()
+        f = self.finding(root, "alice", "files")
+        kind, obj = f.events[0].target()
+        self.assertEqual(kind, "file")
+        self.assertEqual(obj, "/etc/hosts")
+        # ...and it is surfaced in JSON for a client to track
+        d = f.events[0].to_dict()
+        self.assertEqual(d["target_kind"], "file")
+        self.assertEqual(d["target"], "/etc/hosts")
+
+    def test_root_activity_narrative_attributes_each_action(self):
+        root = TestRootAttribution._host(self)
+        text = render_text(self.result(root, "root", "root_activity"))
+        self.assertIn("via sudo/su", text)                 # escalation → base user
+        self.assertIn("via a direct root login from 203.0.113.9", text)
+        self.assertIn("evidence".upper(), text)  # EVIDENCE section present
+
+    def test_json_evidence_carries_object(self):
+        root = self.fully_instrumented()
+        payload = json.loads(render_json(self.result(root, "alice", "timeline")))
+        self.assertTrue(payload["evidence"])
+        objs = {(e["object_kind"], e["object"]) for e in payload["evidence"]}
+        self.assertIn(("file", "/etc/hosts"), objs)
+        for e in payload["evidence"]:
+            self.assertTrue(e["records"])  # every evidence item has raw records
+
+    def test_evidence_facet_text_lists_object_keyed_evidence(self):
+        # The Evidence question (family 12) must render its evidence in text, keyed
+        # by object -- not be dropped by the overview gate.
+        root = self.fully_instrumented()
+        text = render_text(self.result(root, "alice", "evidence"))
+        self.assertIn("EVIDENCE", text)
+        self.assertIn("file: /etc/hosts", text)
+        self.assertNotIn("WHAT HAPPENED", text)  # evidence is the answer, not prose
+
+    def test_overview_facets_have_no_per_event_narrative_in_json(self):
+        # Core/Gaps keep a structured overview; JSON must match the text contract.
+        root = self.fully_instrumented()
+        for facet in ("core", "gaps"):
+            payload = json.loads(render_json(self.result(root, "alice", facet)))
+            self.assertEqual(payload["narrative"], [])
+            self.assertEqual(payload["evidence"], [])
 
 
 if __name__ == "__main__":

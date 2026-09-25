@@ -154,7 +154,18 @@ class RootActivityFacet(Facet):
             candidates = ctx.subject_events(self._TYPES)
         pairs = attribute_root_actions(ctx, candidates)
         pairs.sort(key=lambda p: p[0].ts)
-        f.events = [e for e, _ in pairs]
+        if subject_is_root:
+            # Attribute each action for the narrative: credit the base user who
+            # escalated, the direct root login, or disclose it as a daemon.
+            from dataclasses import replace
+            display = []
+            for e, attr in pairs:
+                actor, via = attr.narration()
+                display.append(replace(e, actor_name=actor,
+                                       attrs={**e.attrs, "via": via}))
+            f.events = display
+        else:
+            f.events = [e for e, _ in pairs]
 
         if not pairs:
             if any(g.question == "Root activity" for g in f.gaps):
