@@ -145,6 +145,24 @@ def resolve_identity(
     """
     notes: List[str] = []
 
+    # A subject given as a bare numeric login uid ("uid:1500") -- used by the
+    # multi-user sweep for login uids seen in evidence that map to no account
+    # name. Match records by that uid directly, and say so.
+    if username.startswith("uid:") and username[4:].isdigit():
+        uid = int(username[4:])
+        exists = any(u == uid for _n, u in passwd_entries)
+        return Subject(
+            username=username, exists_now=exists, current_uid=uid,
+            intervals=[IdentityInterval(
+                uid, None, None, "evidence",
+                "numeric login uid observed in evidence; no resolvable account name",
+            )],
+            resolution_notes=[
+                f"subject specified by numeric login uid {uid}; records are matched "
+                f"by this uid/auid, but no account name could be resolved for it."
+            ],
+        )
+
     # Current mapping.
     current_uid: Optional[int] = None
     exists_now = False
@@ -249,3 +267,51 @@ def resolve_identity(
         intervals=intervals,
         resolution_notes=notes,
     )
+
+
+def resolve_name_for_uid(
+    uid: int,
+    ts: datetime,
+    window: TimeRange,
+    *,
+    passwd_entries: List[Tuple[str, int]],
+    account_events: List[Event],
+) -> Tuple[Optional[str], str]:
+    """Inverse of :func:`resolve_identity`: which username held ``uid`` at ``ts``.
+
+    This is what powers root attribution: given a root action's login uid
+    (``auid``), find the human account it belonged to at the time -- honouring the
+    same time-bounded intervals and UID-reuse handling, so we never attribute a
+    root action to a user who only held that uid at a different time.
+
+    Returns ``(name, note)``; ``name`` is None when no account maps to the uid at
+    that instant (the caller then discloses the action as unattributable).
+    """
+    ts = ts.astimezone(timezone.utc)
+
+    candidates = set()
+    for name, u in passwd_entries:
+        if u == uid:
+            candidates.add(name)
+    for e in account_events:
+        if (
+            e.type == EventType.ACCOUNT_CHANGE
+            and e.attrs.get("id") == uid
+            and e.attrs.get("acct")
+        ):
+            candidates.add(e.attrs["acct"])
+
+    for name in candidates:
+        subj = resolve_identity(
+            name, window, passwd_entries=passwd_entries, account_events=account_events
+        )
+        for iv in subj.intervals:
+            if iv.uid == uid and iv.covers(ts):
+                return name, ""
+
+    passwd_names = [n for n, u in passwd_entries if u == uid]
+    if len(passwd_names) == 1:
+        return passwd_names[0], "current passwd mapping (assumed stable across window)"
+    if uid == 0:
+        return "root", ""
+    return None, f"no account name maps to uid {uid} at {ts.isoformat()}"

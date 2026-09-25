@@ -13,6 +13,10 @@ from __future__ import annotations
 from typing import List
 
 from openpath.facets.accounts import AccountsFacet
+from openpath.facets.attribution import (
+    attribute_root_actions,
+    summarize_responsibility,
+)
 from openpath.facets.base import AnalysisContext, Facet
 from openpath.facets.files import FilesFacet
 from openpath.facets.network import NetworkFacet
@@ -81,6 +85,26 @@ class CoreFacet(Facet):
             )
         for fd in findings:
             f.notes.append(f"[{fd.question_family}] {fd.summary}")
+
+        # Host-wide root attribution: who became root and acted with it. Only
+        # surfaced when the subject IS root -- a per-user Core answer must not leak
+        # other principals' root activity into that user's report.
+        subject_is_root = (
+            ctx.subject.username == "root"
+            or ctx.subject.current_uid == 0
+            or any(iv.uid == 0 for iv in ctx.subject.intervals)
+        )
+        if subject_is_root:
+            from openpath.model.event import EventType
+            root_candidates = [
+                e for e in ctx.events
+                if e.type in (EventType.EXEC, EventType.FILE_CHANGE, EventType.NETWORK)
+            ]
+            pairs = attribute_root_actions(ctx, root_candidates)
+            if pairs:
+                f.notes.append("[Root attribution] root privilege on this host was "
+                               "exercised by -> "
+                               + "; ".join(summarize_responsibility(pairs)))
 
         # Aggregate gaps + identity resolution caveats.
         gap_keys = set()

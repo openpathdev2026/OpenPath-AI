@@ -68,6 +68,38 @@ filter records where `uid == that` — is wrong in ways OpenPath handles explici
   negative plus a disclosed limitation (numeric-only records can't be tied to a
   name we can't resolve), instead of a crash or a false blank.
 
+## Root attribution: who became root
+
+Every action performed with root privilege is traced to *who was actually
+responsible*:
+
+- **Escalation** — a user who ran `sudo`/`su` keeps their audit login uid
+  (`auid`) even though the effective uid becomes 0, so their root actions are
+  attributed **to them** ("alice, via sudo/su"), not to a shared "root".
+- **Direct root login** — *unless a user logged in directly as root* (e.g.
+  `ssh root@host`): then there is no base user, and the action is attributed to
+  the **direct root login with its origin** ("root, direct login from
+  203.0.113.9"). A person who authenticated *as* root is not credited as their
+  own account, because nothing ties the human to it — that is the honest call.
+- **Daemon / no login uid** — a root action from cron, boot, or a service with no
+  login uid is **disclosed as unattributable**, never blamed on a human.
+
+`openpath-ai "what did root do during the last 24 hours?"` gives the host-wide
+breakdown; `"what did alice do as root?"` gives alice's escalated actions only.
+
+## Track every user in one sweep
+
+```
+openpath-ai --all-users --window "last 24 hours"          # core, every user
+openpath-ai --all-users --facet commands --include-inactive
+```
+
+`--all-users` discovers every subject worth analyzing (local accounts plus anyone
+who appears in the evidence, including login uids with no name) and runs the facet
+for each, collecting the raw evidence a single time. Users with no recorded
+activity are listed explicitly as "checked" — so the sweep is provably complete,
+not silently partial.
+
 ## Live host vs. offline evidence bundle
 
 Collectors never hardcode `/var/log`; they read every source under a configurable

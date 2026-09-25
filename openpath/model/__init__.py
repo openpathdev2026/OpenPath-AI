@@ -19,6 +19,7 @@ from openpath.model.identity import (
     IdentityInterval,
     Subject,
     resolve_identity,
+    resolve_name_for_uid,
 )
 from openpath.model.timerange import (
     TimeParseError,
@@ -41,6 +42,7 @@ __all__ = [
     "IdentityInterval",
     "Subject",
     "resolve_identity",
+    "resolve_name_for_uid",
     "TimeParseError",
     "TimeRange",
     "build_range",

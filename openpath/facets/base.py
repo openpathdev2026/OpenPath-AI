@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Iterable, List, Optional, Sequence
+from typing import Iterable, List, Optional, Sequence, Tuple
 
 from openpath.model.coverage import CoverageLedger, Gap, SourceStatus
 from openpath.model.event import Event, EventType
@@ -33,24 +33,28 @@ class AnalysisContext:
     window: TimeRange
     events: List[Event]           # all normalized events from all collectors
     ledger: CoverageLedger
+    # Current passwd snapshot (name, uid). Used for reverse uid->name resolution
+    # when attributing root actions to the responsible account.
+    passwd: List[Tuple[str, int]] = field(default_factory=list)
+
+    def account_events(self) -> List[Event]:
+        return [e for e in self.events if e.type == EventType.ACCOUNT_CHANGE]
 
     def subject_events(
         self, types: Optional[Iterable[EventType]] = None
     ) -> List[Event]:
         """Events attributable to the subject, optionally filtered by type.
 
-        Attribution attaches the resolved username to matched events (so later
-        rendering can show it) without mutating source data semantics.
+        This does not mutate the shared events (their ``actor_name`` is left as the
+        source recorded it). The multi-user sweep reuses one event set across every
+        subject, so mutating attribution here would couple subjects and make the
+        result order-dependent. Renderers use the subject from the finding instead.
         """
         typeset = set(types) if types is not None else None
-        out: List[Event] = []
-        for e in self.events:
-            if typeset is not None and e.type not in typeset:
-                continue
-            if self.subject.matches(e):
-                if e.actor_name is None:
-                    e.actor_name = self.subject.username
-                out.append(e)
+        out = [
+            e for e in self.events
+            if (typeset is None or e.type in typeset) and self.subject.matches(e)
+        ]
         out.sort(key=lambda e: e.ts)
         return out
 
@@ -70,8 +74,9 @@ def check_prereqs(ctx: AnalysisContext, requirements: Sequence[Requirement]) -> 
 
     A requirement is unmet when the source is absent/unreadable/out-of-horizon,
     or when its named instrumentation check is not present. The instrumentation
-    check's own ``detail`` (which carries the concrete remedy, e.g. the audit rule
-    to add) is preferred as the gap remedy.
+    check's ``detail`` (the human explanation) is folded into the gap ``reason``;
+    the actionable fix, when there is one, comes from the requirement's own
+    ``remedy`` field.
     """
     gaps: List[Gap] = []
     for req in requirements:
@@ -91,16 +96,18 @@ def check_prereqs(ctx: AnalysisContext, requirements: Sequence[Requirement]) -> 
         if req.instrument is not None:
             check = cov.instrument(req.instrument)
             if check is None or not check.present:
-                remedy = req.remedy or (check.detail if check else None)
+                detail = check.detail if (check and check.detail) else ""
+                reason = (
+                    f"'{req.source_id}' is present but '{req.instrument}' is not "
+                    f"satisfied"
+                )
+                reason += (
+                    f": {detail}" if detail else
+                    "; the relevant activity is not being recorded, so absence of "
+                    "results does not mean the user did nothing."
+                )
                 gaps.append(
-                    Gap(
-                        req.question,
-                        f"'{req.source_id}' is present but '{req.instrument}' is not "
-                        f"enabled; the relevant activity is not being recorded, so "
-                        f"absence of results does not mean the user did nothing.",
-                        req.source_id,
-                        remedy,
-                    )
+                    Gap(req.question, reason, req.source_id, req.remedy)
                 )
     return gaps
 

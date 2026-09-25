@@ -139,6 +139,12 @@ class WtmpCollector(Collector):
                 source_id=self.source_id, status=SourceStatus.EMPTY,
                 detail="wtmp present but contains no records",
                 locations=locations,
+                instrumentation=[InstrumentationCheck(
+                    "wtmp accounting present", False,
+                    "wtmp exists but is empty (0 records) -- login accounting may be "
+                    "disabled or the file was truncated (common in containers); "
+                    "cannot distinguish this from 'no logins occurred'.",
+                )],
             )
             return CollectResult(events=[], coverage=cov)
 

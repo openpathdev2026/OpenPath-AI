@@ -592,22 +592,20 @@ class AuditdCollector(Collector):
                 "execve audit rule",
                 rules.has_execve or saw_execve,
                 "" if (rules.has_execve or saw_execve) else
-                "no execve rule; command execution is not recorded. Add: "
-                "-a always,exit -F arch=b64 -S execve -S execveat -k exec",
+                "no execve rule loaded; command execution is not recorded",
             ),
             InstrumentationCheck(
                 "network (connect/bind) audit rule",
                 rules.has_connect or rules.has_bind or saw_net,
                 "" if (rules.has_connect or rules.has_bind or saw_net) else
-                "no connect/bind rule; network syscalls are not recorded. Add: "
-                "-a always,exit -F arch=b64 -S connect -S bind -k net",
+                "no connect/bind rule loaded; network syscalls are not recorded",
             ),
             InstrumentationCheck(
                 "file watch/modify audit rule",
                 bool(rules.watches) or saw_file,
                 "" if (rules.watches or saw_file) else
-                "no file watch (-w) or write-syscall rule; file changes are not "
-                "recorded. Add e.g.: -w /etc -p wa -k etc-change",
+                "no file watch (-w) or write-syscall rule loaded; file changes are "
+                "not recorded",
             ),
         ]
         return checks

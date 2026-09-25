@@ -351,6 +351,96 @@ class TestGapDisclosure(Base):
                         "a horizon gap")
 
 
+class TestRootAttribution(Base):
+    """Root activity must be attributed to *who became root* -- the base user who
+    escalated -- except when someone logged in directly as root, and daemon/no-uid
+    root activity must be disclosed as unattributable rather than blamed."""
+
+    def _host(self) -> Path:
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001).passwd("bob", 1002)
+        h.enable_execve().enable_network()
+        h.boot(ago(hours=10))
+        # alice escalates via sudo, runs a command as root
+        h.sudo(1001, 1001, "/usr/bin/systemctl restart nginx", ago(hours=3, minutes=1))
+        h.exec(1001, 0, ["systemctl", "restart", "nginx"], "/usr/bin/systemctl",
+               ago(hours=3), euid=0, comm="systemctl")
+        # someone logs in DIRECTLY as root over ssh (no base user to attribute to)
+        h.ssh_accept("root", "203.0.113.9", ago(hours=2, minutes=1))
+        h.login("root", ago(hours=2), line="pts/5", host="203.0.113.9",
+                until=ago(hours=1))
+        h.exec(0, 0, ["cat", "/etc/shadow"], "/usr/bin/cat",
+               ago(hours=1, minutes=50), euid=0, comm="cat")
+        # a daemon runs as root with NO login uid (unset auid)
+        h.exec(4294967295, 0, ["logrotate"], "/usr/sbin/logrotate",
+               ago(hours=1, minutes=30), euid=0, comm="logrotate")
+        h.write()
+        return root
+
+    def _labels(self, finding):
+        return "\n".join(finding.notes)
+
+    def test_root_activity_for_root_is_attributed_breakdown(self):
+        f = self.finding(self._host(), "root", "root_activity")
+        labels = self._labels(f)
+        # escalation attributed to the base user
+        self.assertIn("alice (via sudo/su)", labels)
+        # ssh-as-root attributed to the direct login + origin, not a base user
+        self.assertIn("direct login from 203.0.113.9", labels)
+        # daemon disclosed
+        self.assertTrue(any(g.question == "Root activity" for g in f.gaps))
+
+    def test_escalated_action_attributes_to_base_user_only(self):
+        f = self.finding(self._host(), "alice", "root_activity")
+        cmds = [e.attrs.get("cmdline") for e in f.events]
+        self.assertIn("systemctl restart nginx", cmds)
+        # alice must NOT be credited with the direct-root-login or daemon actions
+        self.assertNotIn("cat /etc/shadow", cmds)
+        self.assertNotIn("logrotate", cmds)
+
+    def test_direct_root_login_reported_as_such(self):
+        f = self.finding(self._host(), "root", "privilege")
+        self.assertIn("directly", f.summary)
+        self.assertIn("203.0.113.9", f.summary)
+
+    def test_user_who_sshd_as_root_not_credited_as_base_user(self):
+        # bob authenticated as root (root's credentials); there is no evidence
+        # tying the human 'bob' to the root session -> honest negative for bob.
+        f = self.finding(self._host(), "bob", "privilege")
+        self.assertTrue(f.summary.startswith("No"))
+        f_root = self.finding(self._host(), "bob", "root_activity")
+        self.assertEqual(len(f_root.events), 0)
+
+    def test_core_shows_who_exercised_root(self):
+        f = self.finding(self._host(), "root", "core")
+        note = "\n".join(f.notes)
+        self.assertIn("Root attribution", note)
+        self.assertIn("alice (via sudo/su)", note)
+
+    def test_per_user_core_does_not_leak_host_root_attribution(self):
+        # A non-root user's Core answer must not enumerate other principals' root
+        # activity.
+        f = self.finding(self._host(), "alice", "core")
+        note = "\n".join(f.notes)
+        self.assertNotIn("[Root attribution]", note)
+
+    def test_unresolved_root_uid_is_disclosed_not_falsely_attributed(self):
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.enable_execve()
+        h.boot(ago(hours=10))
+        # A root action whose login uid (2000) maps to no account name.
+        h.exec(2000, 0, ["mystery-root"], "/usr/bin/x", ago(hours=2), euid=0)
+        h.write()
+        f = self.finding(root, "root", "root_activity")
+        # It must be disclosed as not attributable to a specific human...
+        self.assertTrue(any(g.question == "Root activity" for g in f.gaps))
+        # ...and never claimed as a confident named escalation.
+        self.assertNotIn("via sudo/su", "\n".join(f.notes))
+
+
 class TestNaturalLanguageRouting(Base):
     """The 13 canonical questions route to the right facet and extract the right
     subject -- for arbitrary usernames, not a hardcoded set."""
@@ -375,6 +465,68 @@ class TestNaturalLanguageRouting(Base):
                          "past 7 days")
         self.assertIsNotNone(router.extract_time("between 2026-09-01 and later")
                              or router.extract_time("2026-09-01..2026-09-02"))
+
+
+class TestMultiUserSweep(Base):
+    """'For every user, track all that activity' -- the whole-host sweep."""
+
+    def _host(self) -> Path:
+        root = self.make_root()
+        h = HostBuilder(root)
+        (h.passwd("root", 0).passwd("alice", 1001).passwd("bob", 1002)
+         .passwd("svc", 1600).passwd("nobody", 65534))
+        h.enable_execve()
+        h.boot(ago(hours=20))
+        h.login("alice", ago(hours=3), host="203.0.113.7", until=ago(hours=1))
+        h.exec(1001, 1001, ["vim"], "/usr/bin/vim", ago(hours=2))
+        h.exec(1002, 1002, ["ls"], "/usr/bin/ls", ago(hours=4))
+        h.write()
+        return root
+
+    def test_sweep_covers_every_local_user(self):
+        collected = Engine().collect(self.env(self._host()), self.win())
+        subjects = Engine().discover_subjects(collected)
+        for u in ["root", "alice", "bob", "svc", "nobody"]:
+            self.assertIn(u, subjects)
+
+    def test_sweep_runs_facet_per_user_and_separates_active(self):
+        results = Engine().analyze_all(self.env(self._host()), self.win(), "commands")
+        by_user = {r.subject.username: r for r in results}
+        # active users have their commands
+        self.assertTrue(by_user["alice"].finding.events)
+        self.assertTrue(by_user["bob"].finding.events)
+        # an inactive account is an evidenced negative (no events), not a crash
+        self.assertIn("nobody", by_user)
+        self.assertEqual(len(by_user["nobody"].finding.events), 0)
+
+    def test_evidence_only_login_uid_is_tracked(self):
+        # A login uid with no account name (deleted user, no account records) must
+        # still be discovered and its activity attributed -- the sweep is complete.
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.enable_execve()
+        h.boot(ago(hours=10))
+        h.exec(2000, 2000, ["mystery"], "/usr/bin/mystery", ago(hours=2))
+        h.write()
+        collected = Engine().collect(self.env(root), self.win())
+        subjects = Engine().discover_subjects(collected)
+        self.assertIn("uid:2000", subjects)
+        results = {r.subject.username: r
+                   for r in Engine().analyze_all(self.env(root), self.win(), "commands")}
+        self.assertIn("uid:2000", results)
+        cmds = [e.attrs.get("cmdline") for e in results["uid:2000"].finding.events]
+        self.assertIn("mystery", cmds)
+
+    def test_sweep_does_not_cross_attribute(self):
+        results = Engine().analyze_all(self.env(self._host()), self.win(), "commands")
+        by_user = {r.subject.username: r for r in results}
+        alice_cmds = {e.attrs.get("cmdline") for e in by_user["alice"].finding.events}
+        bob_cmds = {e.attrs.get("cmdline") for e in by_user["bob"].finding.events}
+        self.assertIn("vim", alice_cmds)
+        self.assertNotIn("ls", alice_cmds)
+        self.assertIn("ls", bob_cmds)
+        self.assertNotIn("vim", bob_cmds)
 
 
 class TestSerialization(Base):

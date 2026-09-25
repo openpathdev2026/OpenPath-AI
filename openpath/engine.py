@@ -26,7 +26,7 @@ from openpath.facets.base import AnalysisContext
 from openpath.model.coverage import CoverageLedger
 from openpath.model.event import Event, EventType
 from openpath.model.finding import Finding
-from openpath.model.identity import Subject, resolve_identity
+from openpath.model.identity import Subject, resolve_identity, resolve_name_for_uid
 from openpath.model.timerange import TimeRange
 from openpath.sources import Collector, default_collectors
 
@@ -39,13 +39,25 @@ class AnalysisResult:
     context: AnalysisContext
 
 
+@dataclass
+class Collected:
+    """Result of running every collector once: events + coverage + passwd snapshot.
+
+    Kept separate from identity resolution so a multi-user sweep collects the raw
+    evidence a single time and resolves each subject against the shared set.
+    """
+
+    events: List[Event]
+    ledger: CoverageLedger
+    passwd: List
+    window: TimeRange
+
+
 class Engine:
     def __init__(self, collectors: Optional[List[Collector]] = None):
         self.collectors = collectors if collectors is not None else default_collectors()
 
-    def build_context(
-        self, env: Env, username: str, window: TimeRange
-    ) -> AnalysisContext:
+    def collect(self, env: Env, window: TimeRange) -> Collected:
         all_events: List[Event] = []
         ledger = CoverageLedger(window=window)
         for collector in self.collectors:
@@ -72,15 +84,29 @@ class Engine:
         if boots:
             ledger.first_boot = boots[0]
 
-        account_events = [e for e in all_events if e.type == EventType.ACCOUNT_CHANGE]
+        return Collected(
+            events=all_events, ledger=ledger,
+            passwd=env.read_passwd(), window=window,
+        )
+
+    def context_for(self, collected: Collected, username: str) -> AnalysisContext:
+        account_events = [
+            e for e in collected.events if e.type == EventType.ACCOUNT_CHANGE
+        ]
         subject = resolve_identity(
-            username, window,
-            passwd_entries=env.read_passwd(),
-            account_events=account_events,
+            username, collected.window,
+            passwd_entries=collected.passwd, account_events=account_events,
         )
         return AnalysisContext(
-            subject=subject, window=window, events=all_events, ledger=ledger
+            subject=subject, window=collected.window,
+            events=collected.events, ledger=collected.ledger,
+            passwd=collected.passwd,
         )
+
+    def build_context(
+        self, env: Env, username: str, window: TimeRange
+    ) -> AnalysisContext:
+        return self.context_for(self.collect(env, window), username)
 
     def analyze(
         self, env: Env, username: str, window: TimeRange, facet_name: str
@@ -90,3 +116,38 @@ class Engine:
         return AnalysisResult(
             finding=finding, subject=ctx.subject, ledger=ctx.ledger, context=ctx
         )
+
+    def discover_subjects(self, collected: Collected) -> List[str]:
+        """Every user worth analyzing: local accounts plus anyone who appears in
+        the evidence (by name, or resolved from a login uid seen in the window)."""
+        names = set()
+        for name, _uid in collected.passwd:
+            names.add(name)
+        account_events = [
+            e for e in collected.events if e.type == EventType.ACCOUNT_CHANGE
+        ]
+        for e in collected.events:
+            if e.actor_name:
+                names.add(e.actor_name)
+            if e.auid is not None:
+                nm, _note = resolve_name_for_uid(
+                    e.auid, e.ts, collected.window,
+                    passwd_entries=collected.passwd, account_events=account_events,
+                )
+                names.add(nm if nm else f"uid:{e.auid}")
+        return sorted(names)
+
+    def analyze_all(
+        self, env: Env, window: TimeRange, facet_name: str,
+    ) -> List[AnalysisResult]:
+        """Run a facet for every discovered subject, collecting evidence once."""
+        collected = self.collect(env, window)
+        results = []
+        for username in self.discover_subjects(collected):
+            ctx = self.context_for(collected, username)
+            finding = get_facet(facet_name).analyze(ctx)
+            results.append(AnalysisResult(
+                finding=finding, subject=ctx.subject,
+                ledger=ctx.ledger, context=ctx,
+            ))
+        return results
