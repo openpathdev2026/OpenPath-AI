@@ -12,6 +12,8 @@ openpath-ai "Did deploybot become root during the last 24 hours?"
 openpath-ai --user j.doe --window "last 7 days" "what files did j.doe change?"
 ```
 
+**Docs:** [Architecture](docs/ARCHITECTURE.md) · [Deployment](docs/DEPLOYMENT.md) · [Changelog](CHANGELOG.md)
+
 ## The one idea that makes "100% accuracy" honest
 
 You cannot prove you captured *everything* a user did on a Linux host — there are
@@ -153,10 +155,18 @@ make test
 
 The conformance suite (`tests/conformance/`) builds synthetic hosts in the **real
 on-disk formats** (including a user created inside the window, UID reuse, a
-never-existed user, hosts missing audit rules, and a rotated log) and asserts the
+never-existed user, hosts missing audit rules, a rotated log, direct-root-login
+attribution, a large streamed audit log, and the multi-user sweep) and asserts the
 answers exactly — including the negative and "cannot determine" cases. That suite
 is the readiness gate: if it is green, the 13 questions hold for arbitrary users
 and windows.
+
+A **live** suite (`tests/live/`) runs against the real host (`--data-root /`) and
+validates whatever sources exist, always enforcing that every claim is cited. For
+a fully-instrumented auditd host, `scripts/live_conformance.sh` (root, real VM)
+loads the rules, drives known activity, and checks the 13 answers end to end.
+`scripts/collect_bundle.sh` snapshots a host into an offline evidence bundle.
+Large `audit.log` files are streamed, so memory stays bounded regardless of size.
 
 ## Known limitations (disclosed, by design)
 
@@ -183,5 +193,9 @@ openpath/
   cli.py      # openpath-ai entrypoint
 tests/
   unit/       # primitives (time, identity, saddr, struct)
-  conformance/# the product-readiness baseline
+  conformance/# the product-readiness baseline (synthetic real-format hosts)
+  live/       # live checks against the real host filesystem
+scripts/      # collect_bundle.sh, live_conformance.sh
+contrib/      # openpath.rules (recommended auditd rules)
+docs/         # ARCHITECTURE.md, DEPLOYMENT.md
 ```

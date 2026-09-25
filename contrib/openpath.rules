@@ -1,0 +1,38 @@
+# OpenPath-AI recommended auditd rules.
+#
+# These make the auditd-backed questions answerable: Commands, Root activity,
+# Network, Files, and per-user attribution of Package changes. (Accounts/groups
+# need no rule -- ADD_USER/DEL_USER/GRP_MGMT are emitted by PAM/shadow whenever
+# auditd runs. Sessions/Login come from wtmp + the sshd journal, not auditd.)
+#
+# Install:
+#   sudo cp contrib/openpath.rules /etc/audit/rules.d/openpath.rules
+#   sudo augenrules --load        # or: sudo auditctl -R /etc/audit/rules.d/openpath.rules
+#   sudo auditctl -l              # verify loaded
+#
+# Note the volume/perf trade-off: the execve and (especially) the broad file
+# rule generate a lot of events on busy hosts. Scope with -F auid>=1000 or
+# per-directory watches as fits your policy.
+
+# --- Command execution: Commands (7), Root activity (6), package attribution ---
+-a always,exit -F arch=b64 -S execve -S execveat -k exec
+-a always,exit -F arch=b32 -S execve -S execveat -k exec
+
+# --- Network: connect/bind (11) ---
+-a always,exit -F arch=b64 -S connect -S bind -k net
+-a always,exit -F arch=b32 -S connect -S bind -k net
+
+# --- File changes to sensitive areas: Files (8) ---
+-w /etc -p wa -k etc-change
+-w /etc/passwd -p wa -k identity
+-w /etc/shadow -p wa -k identity
+-w /etc/group -p wa -k identity
+-w /etc/gshadow -p wa -k identity
+-w /etc/sudoers -p wa -k identity
+-w /etc/sudoers.d/ -p wa -k identity
+-w /etc/ssh/sshd_config -p wa -k sshd-config
+
+# --- Optional: broad write-syscall coverage for all interactive users ---
+# Higher volume; enable if you need file changes outside /etc too.
+# -a always,exit -F arch=b64 -F auid>=1000 -F auid!=4294967295 -S unlinkat,renameat,renameat2,fchmodat,fchownat,truncate,ftruncate,creat -k file-change
+# -a always,exit -F arch=b64 -F auid>=1000 -F auid!=4294967295 -S unlink,rename,chmod,chown -k file-change

@@ -285,7 +285,8 @@ class AuditdCollector(Collector):
 
     def collect(self, env: Env, window: TimeRange) -> CollectResult:
         rules = parse_audit_rules(env)
-        groups, locations = self._read_groups(env)
+        locs = self._resolve_locations(env)
+        locations = [str(p) for _rel, p in locs]
 
         auditd_installed = (
             rules.present
@@ -294,7 +295,7 @@ class AuditdCollector(Collector):
             or env.exists("usr/sbin/auditd")
         )
 
-        if not locations:
+        if not locs:
             status = SourceStatus.ABSENT if not auditd_installed else SourceStatus.EMPTY
             cov = SourceCoverage(
                 source_id=self.source_id,
@@ -305,35 +306,42 @@ class AuditdCollector(Collector):
             )
             return CollectResult(events=[], coverage=cov)
 
-        all_ts = [g.ts for g in groups]
-        hstart, hend = self._span(all_ts)
-
+        # Stream: one event group is held at a time, horizon + instrumentation are
+        # accumulated incrementally, and only in-window events are retained. Memory
+        # is therefore bounded by the in-window result set, not by log size.
         events: List[Event] = []
         saw_execve = saw_net = saw_file = False
-        for g in groups:
-            ev = self._interpret(g, window)
-            for e in ev:
+        count = 0
+        hmin = hmax = None
+        for g in self._iter_groups(locs):
+            count += 1
+            if hmin is None or g.ts < hmin:
+                hmin = g.ts
+            if hmax is None or g.ts > hmax:
+                hmax = g.ts
+            for e in self._interpret(g, window):
                 if e.type == EventType.EXEC:
                     saw_execve = True
                 elif e.type == EventType.NETWORK:
                     saw_net = True
                 elif e.type == EventType.FILE_CHANGE:
                     saw_file = True
-            events.extend([e for e in ev if window.contains(e.ts)])
+                if window.contains(e.ts):
+                    events.append(e)
 
         events.sort(key=lambda e: e.ts)
 
-        status = SourceStatus.AVAILABLE if groups else SourceStatus.EMPTY
-        if hstart is not None and hstart > window.end:
+        status = SourceStatus.AVAILABLE if count else SourceStatus.EMPTY
+        if hmin is not None and hmin > window.end:
             status = SourceStatus.OUT_OF_HORIZON
 
         cov = SourceCoverage(
             source_id=self.source_id,
             status=status,
-            detail=f"{len(groups)} audit events parsed across {len(locations)} file(s)",
-            horizon_start=hstart,
-            horizon_end=hend,
-            record_count=len(groups),
+            detail=f"{count} audit events parsed across {len(locations)} file(s)",
+            horizon_start=hmin,
+            horizon_end=hmax,
+            record_count=count,
             locations=locations,
             retention_bounded=any("audit.log." in loc for loc in locations),
             instrumentation=self._instrumentation(rules, saw_execve, saw_net, saw_file),
@@ -342,39 +350,59 @@ class AuditdCollector(Collector):
 
     # -- reading / grouping ------------------------------------------------- #
 
-    def _read_groups(self, env: Env) -> Tuple[List[_Group], List[str]]:
-        groups: Dict[str, _Group] = {}
-        order: List[str] = []
-        locations: List[str] = []
+    def _resolve_locations(self, env: Env) -> List[Tuple[str, "Path"]]:
+        out = []
         for rel in _AUDIT_LOG_PATHS:
             p = env.path(rel)
-            if not p.exists():
-                continue
-            locations.append(str(p))
+            if p.exists():
+                out.append((rel, p))
+        return out
+
+    def _iter_groups(self, locations):
+        """Yield one :class:`_Group` at a time by streaming lines.
+
+        auditd writes all records of a single event consecutively (the same
+        contiguity assumption ausearch/aureport rely on), so a group is finalized
+        as soon as the audit event id (``msgid``) changes. Only the current group
+        is held in memory.
+
+        The current group is carried *across* files (read oldest-first), and is
+        yielded only on a msgid change, so an event whose records straddle a
+        rotation boundary -- SYSCALL in ``audit.log.1``, EXECVE/PATH at the start
+        of ``audit.log`` -- is still reunited (the records remain adjacent in read
+        order). A group is not yielded at a file boundary for that reason.
+        """
+        cur = None
+        for rel, p in locations:
             try:
-                text = p.read_text(encoding="utf-8", errors="replace")
+                fh = p.open("r", encoding="utf-8", errors="replace")
             except OSError:
                 continue
-            for lineno, line in enumerate(text.splitlines(), start=1):
-                if "type=" not in line or "audit(" not in line:
-                    continue
-                m_id = _AUDIT_ID_RE.search(line)
-                m_ty = _TYPE_RE.search(line)
-                if not m_id or not m_ty:
-                    continue
-                epoch = int(m_id.group(1))
-                usec = int(m_id.group(2))
-                serial = m_id.group(3)
-                msgid = f"{epoch}.{usec}:{serial}"
-                ts = datetime.fromtimestamp(epoch + usec / 1000.0, tz=timezone.utc)
-                rtype = m_ty.group(1)
-                fields = _parse_fields(line)
-                locator = f"{rel}:{lineno}"
-                if msgid not in groups:
-                    groups[msgid] = _Group(msgid, ts)
-                    order.append(msgid)
-                groups[msgid].records.append((rtype, fields, line.strip(), locator))
-        return [groups[k] for k in order], locations
+            with fh:
+                for lineno, line in enumerate(fh, start=1):
+                    if "type=" not in line or "audit(" not in line:
+                        continue
+                    m_id = _AUDIT_ID_RE.search(line)
+                    m_ty = _TYPE_RE.search(line)
+                    if not m_id or not m_ty:
+                        continue
+                    epoch = int(m_id.group(1))
+                    usec = int(m_id.group(2))
+                    serial = m_id.group(3)
+                    msgid = f"{epoch}.{usec}:{serial}"
+                    if cur is not None and cur.msgid != msgid:
+                        yield cur
+                        cur = None
+                    if cur is None:
+                        ts = datetime.fromtimestamp(epoch + usec / 1000.0,
+                                                    tz=timezone.utc)
+                        cur = _Group(msgid, ts)
+                    cur.records.append(
+                        (m_ty.group(1), _parse_fields(line), line.strip(),
+                         f"{rel}:{lineno}")
+                    )
+        if cur is not None:
+            yield cur
 
     # -- interpretation ----------------------------------------------------- #
 

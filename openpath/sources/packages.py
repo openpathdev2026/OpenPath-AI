@@ -15,8 +15,7 @@ This separation is the honest one: we never guess who installed a package.
 from __future__ import annotations
 
 import re
-from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import List
 
 from openpath.env import Env
 from openpath.model.citation import Citation
@@ -61,9 +60,20 @@ class PackageCollector(Collector):
 
     def collect(self, env: Env, window: TimeRange) -> CollectResult:
         events: List[Event] = []
-        all_ts: List[datetime] = []
         locations: List[str] = []
         managers_seen = set()
+        # Horizon/count tracked incrementally so memory is bounded by the
+        # in-window result set, not by the total number of transactions.
+        hmin = hmax = None
+        count = 0
+
+        def _seen(ts):
+            nonlocal hmin, hmax, count
+            count += 1
+            if hmin is None or ts < hmin:
+                hmin = ts
+            if hmax is None or ts > hmax:
+                hmax = ts
 
         for rel in _DNF_RPM_PATHS:
             p = env.path(rel)
@@ -72,28 +82,31 @@ class PackageCollector(Collector):
             locations.append(str(p))
             managers_seen.add("dnf")
             try:
-                text = p.read_text(encoding="utf-8", errors="replace")
+                fh = p.open("r", encoding="utf-8", errors="replace")
             except OSError:
                 continue
-            for lineno, line in enumerate(text.splitlines(), start=1):
-                m = _DNF_RE.match(line.strip())
-                if not m:
-                    continue
-                try:
-                    ts = parse_instant(m.group("ts"), env.local_tz)
-                except ValueError:
-                    continue
-                all_ts.append(ts)
-                action = _DNF_VERB_ACTION.get(m.group("verb"), m.group("verb").lower())
-                ev = Event(
-                    ts=ts, type=EventType.PACKAGE_CHANGE, source_id="dnf.rpm",
-                    summary=f"{action} {m.group('pkg')}",
-                    attrs={"action": action, "package": m.group("pkg"),
-                           "manager": "dnf"},
-                    citations=[Citation("dnf.rpm", f"{rel}:{lineno}", line.strip())],
-                )
-                if window.contains(ts):
-                    events.append(ev)
+            with fh:  # stream line-by-line to bound memory on large logs
+                for lineno, line in enumerate(fh, start=1):
+                    m = _DNF_RE.match(line.strip())
+                    if not m:
+                        continue
+                    try:
+                        ts = parse_instant(m.group("ts"), env.local_tz)
+                    except ValueError:
+                        continue
+                    _seen(ts)
+                    action = _DNF_VERB_ACTION.get(
+                        m.group("verb"), m.group("verb").lower())
+                    ev = Event(
+                        ts=ts, type=EventType.PACKAGE_CHANGE, source_id="dnf.rpm",
+                        summary=f"{action} {m.group('pkg')}",
+                        attrs={"action": action, "package": m.group("pkg"),
+                               "manager": "dnf"},
+                        citations=[Citation("dnf.rpm", f"{rel}:{lineno}",
+                                            line.strip())],
+                    )
+                    if window.contains(ts):
+                        events.append(ev)
 
         for rel in _DPKG_PATHS:
             p = env.path(rel)
@@ -102,33 +115,34 @@ class PackageCollector(Collector):
             locations.append(str(p))
             managers_seen.add("dpkg")
             try:
-                text = p.read_text(encoding="utf-8", errors="replace")
+                fh = p.open("r", encoding="utf-8", errors="replace")
             except OSError:
                 continue
-            for lineno, line in enumerate(text.splitlines(), start=1):
-                m = _DPKG_RE.match(line.strip())
-                if not m:
-                    continue
-                try:
-                    ts = parse_instant(f"{m.group('date')} {m.group('time')}",
-                                       env.local_tz)
-                except ValueError:
-                    continue
-                all_ts.append(ts)
-                ev = Event(
-                    ts=ts, type=EventType.PACKAGE_CHANGE, source_id="dpkg",
-                    summary=f"{m.group('action')} {m.group('pkg')} "
-                            f"{m.group('from')}->{m.group('to')}",
-                    attrs={"action": m.group("action"), "package": m.group("pkg"),
-                           "version_from": m.group("from"),
-                           "version_to": m.group("to"), "manager": "dpkg"},
-                    citations=[Citation("dpkg", f"{rel}:{lineno}", line.strip())],
-                )
-                if window.contains(ts):
-                    events.append(ev)
+            with fh:  # stream line-by-line to bound memory on large logs
+                for lineno, line in enumerate(fh, start=1):
+                    m = _DPKG_RE.match(line.strip())
+                    if not m:
+                        continue
+                    try:
+                        ts = parse_instant(f"{m.group('date')} {m.group('time')}",
+                                           env.local_tz)
+                    except ValueError:
+                        continue
+                    _seen(ts)
+                    ev = Event(
+                        ts=ts, type=EventType.PACKAGE_CHANGE, source_id="dpkg",
+                        summary=f"{m.group('action')} {m.group('pkg')} "
+                                f"{m.group('from')}->{m.group('to')}",
+                        attrs={"action": m.group("action"), "package": m.group("pkg"),
+                               "version_from": m.group("from"),
+                               "version_to": m.group("to"), "manager": "dpkg"},
+                        citations=[Citation("dpkg", f"{rel}:{lineno}", line.strip())],
+                    )
+                    if window.contains(ts):
+                        events.append(ev)
 
         events.sort(key=lambda e: e.ts)
-        hstart, hend = self._span(all_ts)
+        hstart, hend = hmin, hmax
 
         if not locations:
             cov = SourceCoverage(
@@ -144,13 +158,13 @@ class PackageCollector(Collector):
             )
             return CollectResult(events=[], coverage=cov)
 
-        status = SourceStatus.AVAILABLE if all_ts else SourceStatus.EMPTY
+        status = SourceStatus.AVAILABLE if count else SourceStatus.EMPTY
         cov = SourceCoverage(
             source_id=self.source_id,
             status=status,
-            detail=f"{len(all_ts)} package transactions from {sorted(managers_seen)}",
+            detail=f"{count} package transactions from {sorted(managers_seen)}",
             horizon_start=hstart, horizon_end=hend,
-            record_count=len(all_ts), locations=locations,
+            record_count=count, locations=locations,
             retention_bounded=any(".log." in loc for loc in locations),
             instrumentation=[
                 InstrumentationCheck("package transaction log present", True),

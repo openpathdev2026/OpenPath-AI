@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import shutil
 import tempfile
+import tracemalloc
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -30,6 +31,7 @@ from openpath.engine import Engine
 from openpath.env import Env
 from openpath.model.timerange import TimeRange, build_range
 from openpath.render import render_json, render_text
+from openpath.sources.auditd import AuditdCollector
 from tests.conformance.fixtures import HostBuilder
 
 # The canonical 13 questions, as {user} templates -> expected facet.
@@ -548,6 +550,73 @@ class TestMultiArch(Base):
         self.assertEqual(len(f.events), 1)
         self.assertEqual(f.events[0].attrs.get("syscall"), "execve")
         self.assertIn("deploy.sh", f.events[0].attrs.get("cmdline", ""))
+
+
+class TestStreaming(Base):
+    """Large audit logs are streamed: memory stays bounded by the in-window result
+    set, not by log size, and correctness is unaffected."""
+
+    def test_large_audit_log_bounded_memory_and_correct(self):
+        import os
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.enable_execve()
+        h.boot(ago(hours=40))
+        # 8000 noise events well OUTSIDE the 24h window
+        for i in range(8000):
+            h.exec(1001, 1001, ["noise", str(i)], "/usr/bin/noise",
+                   ago(hours=35, seconds=-(i % 3000)))
+        # a couple INSIDE the window
+        h.exec(1001, 1001, ["real-cmd-1"], "/usr/bin/a", ago(hours=2))
+        h.exec(1001, 0, ["real-cmd-2"], "/usr/bin/b", ago(hours=1), euid=0)
+        h.write()
+
+        env = self.env(root)
+        win = self.win()
+        log_size = os.path.getsize(root / "var/log/audit/audit.log")
+        tracemalloc.start()
+        res = AuditdCollector().collect(env, win)
+        _cur, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+
+        # correctness: only the in-window events are returned
+        cmds = sorted(e.attrs.get("cmdline") for e in res.events)
+        self.assertEqual(cmds, ["real-cmd-1", "real-cmd-2"])
+        self.assertGreaterEqual(res.coverage.record_count, 8000)
+        # bounded memory, expressed relative to input size (robust across
+        # interpreters/allocators): a materialize-everything parser holds Python
+        # objects several times the file size; streaming keeps peak a fraction of
+        # it. The multi-MB log must parse in well under one file's worth of memory.
+        self.assertLess(peak, log_size,
+                        f"peak {peak} >= log size {log_size}: not streaming")
+        self.assertLess(peak, 2_000_000)  # absolute sanity ceiling
+
+    def test_event_split_across_rotation_is_reunited(self):
+        # An event whose records straddle a rotation boundary (SYSCALL in
+        # audit.log.1, EXECVE/CWD at the head of audit.log) must still be
+        # reconstructed -- the streaming grouper carries the group across files.
+        from tests.conformance.fixtures import _epoch_msec
+        root = self.make_root()
+        (root / "var/log/audit").mkdir(parents=True)
+        (root / "etc/audit").mkdir(parents=True)
+        (root / "etc").joinpath("passwd").write_text(
+            "root:x:0:0::/root:/bin/bash\nalice:x:1001:1001::/home/alice:/bin/bash\n")
+        (root / "etc/audit/audit.rules").write_text(
+            "-a always,exit -F arch=b64 -S execve -k exec\n")
+        aid = f"{_epoch_msec(ago(hours=2))}:9001"
+        # older file ends with the SYSCALL record...
+        (root / "var/log/audit/audit.log.1").write_text(
+            f'type=SYSCALL msg=audit({aid}): arch=c000003e syscall=59 success=yes '
+            f'auid=1001 uid=0 euid=0 tty=pts0 comm="dnf" exe="/usr/bin/dnf" key="exec"\n')
+        # ...the current file begins with the rest of the SAME event.
+        (root / "var/log/audit/audit.log").write_text(
+            f'type=EXECVE msg=audit({aid}): argc=2 a0="dnf" a1="update"\n'
+            f'type=CWD msg=audit({aid}): cwd="/root"\n')
+        f = self.finding(root, "alice", "commands")
+        self.assertEqual(len(f.events), 1)
+        self.assertEqual(f.events[0].attrs.get("cmdline"), "dnf update")
+        self.assertEqual(f.events[0].attrs.get("as_root"), True)
 
 
 class TestSerialization(Base):
