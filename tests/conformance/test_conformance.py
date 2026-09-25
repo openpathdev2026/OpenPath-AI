@@ -1102,6 +1102,64 @@ class TestFederatedEvidence(Base):
         h.write()
         self.assertIs(self._conf(root, "alice", "network"), self._C.PARTIAL)
 
+    def test_narrow_watch_zero_events_partial_with_real_gap(self):
+        """Review finding #1: a narrow watch + zero file changes must not be a
+        bare 'no file changes' certified negative -- it is PARTIAL, backed by a real
+        Files gap, and the render never claims completeness."""
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.enable_execve().watch("/etc", "wa", "etc")  # narrow, no write-syscall rule
+        h.write()  # alice makes NO file changes
+        f = self.finding(root, "alice", "files")
+        self.assertEqual(f.events, [])
+        self.assertIs(f.confidence, self._C.PARTIAL)
+        self.assertTrue(any(g.question == "Files" for g in f.gaps),
+                        "narrow-watch negative must disclose a real Files gap")
+        text = render_text(self.result(root, "alice", "files"))
+        self.assertNotIn("fully substantiated and complete", text)
+
+    def test_connect_only_zero_events_partial_with_real_gap(self):
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h._rules.append("-a always,exit -F arch=b64 -S connect -k net")  # no bind
+        h.write()  # no network events
+        f = self.finding(root, "alice", "network")
+        self.assertEqual(f.events, [])
+        self.assertIs(f.confidence, self._C.PARTIAL)
+        self.assertTrue(any(g.question == "Network" for g in f.gaps))
+
+    def test_conservation_loss_on_consumed_source_degrades(self):
+        """Review finding #2: a source that FEEDS the finding's events but dropped
+        undecodable records degrades confidence, even if it isn't the winner."""
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0)
+        h.enable_execve()  # auditd is the clean winning source for privilege
+        h.boot(ago(hours=20))
+        h.login("root", ago(hours=3), host="198.51.100.5", until=ago(hours=1))
+        h.write()
+        with open(root / "var/log/wtmp", "ab") as fh:  # corrupt wtmp tail
+            fh.write(b"\x07\x00truncated-tail")
+        f = self.finding(root, "root", "privilege")
+        self.assertTrue(f.events)  # direct root login came from wtmp
+        self.assertIsNot(f.confidence, self._C.CERTIFIED,
+                         "a consumed source that dropped records must degrade")
+
+    def test_packages_auth_only_is_partial_with_gap(self):
+        """Review finding #3: auth only witnesses sudo-invoked package managers, so
+        packages+auth is PARTIAL (not CERTIFIED), backed by a disclosed gap."""
+        root = self.make_root()
+        h = HostBuilder(root).no_auditd()
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.auth_sudo("alice", "/usr/bin/dnf install -y nginx", ago(hours=2))
+        h.pkg("Installed", "nginx-1.24.0-1.fc40.x86_64", ago(hours=2))
+        h.write()
+        f = self.finding(root, "alice", "packages")
+        self.assertIs(f.confidence, self._C.PARTIAL)
+        self.assertTrue(any(g.question == "Packages" for g in f.gaps))
+
     def test_wtmp_only_direct_root_login_is_not_unanswerable(self):
         """The invariant: a determined, cited finding is never UNANSWERABLE, even
         though Q05's certified sources (auditd/auth) are both absent."""
@@ -1182,6 +1240,16 @@ class TestSpecConsistency(Base):
                 set(espec.answerability_sources()),
                 self._req_sources(getattr(facet, "requirements", ())),
                 f"{spec.name}: spec answerability set != facet requirement sources")
+
+    def test_aggregate_derived_from_matches_data_facets(self):
+        """Review finding #4: derived_from must name exactly the data facets the
+        aggregates federate, so the declared contract can't drift from behavior."""
+        from openpath.catalog import spec_for_facet, _DATA_FACETS
+        from openpath.facets.meta import _base_facets
+        base_names = tuple(f.name for f in _base_facets())
+        self.assertEqual(base_names, _DATA_FACETS)
+        for agg in ("core", "timeline", "evidence"):
+            self.assertEqual(spec_for_facet(agg).derived_from, _DATA_FACETS, agg)
 
 
 class TestCatalog(Base):

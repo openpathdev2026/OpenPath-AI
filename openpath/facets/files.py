@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from openpath.facets.base import AnalysisContext, Facet, Requirement
+from openpath.facets.base import AnalysisContext, Facet, Requirement, source_met
+from openpath.model.coverage import Gap
 from openpath.model.event import EventType
 from openpath.model.finding import Finding
 
@@ -23,14 +24,34 @@ class FilesFacet(Facet):
 
     def analyze(self, ctx: AnalysisContext) -> Finding:
         f = self._new_finding(ctx)
-        f.gaps.extend(self._prereq_gaps(ctx))
+        prereq = self._prereq_gaps(ctx)
+        f.gaps.extend(prereq)
+
+        # A path-scoped -w watch answers only for the watched paths; without a
+        # host-wide write-syscall rule, changes elsewhere are not recorded, so any
+        # negative is scope-limited. Disclose it as a real gap (even with zero
+        # events) rather than presenting a false, unqualified "no file changes".
+        narrow = (source_met(ctx, "auditd", "file watch/modify audit rule")
+                  and not source_met(ctx, "auditd", "host-wide file-change rule"))
+        if narrow:
+            f.gaps.append(Gap(
+                "Files",
+                "only path-scoped file watches are loaded; file changes outside the "
+                "watched paths are not recorded, so this answer is scope-limited.",
+                "auditd", _FILE_REMEDY))
 
         changes = ctx.subject_events([EventType.FILE_CHANGE])
         f.events = changes
 
         if not changes:
-            if any(g.question == "Files" for g in f.gaps):
+            if prereq:  # no carrier at all -> genuinely undeterminable
                 f.summary = f"Cannot determine {ctx.subject.username}'s file changes (see gaps)."
+            elif narrow:
+                f.summary = (
+                    f"No file changes by {ctx.subject.username} under the watched "
+                    f"paths in {ctx.window.label or 'the window'}; changes elsewhere "
+                    f"are not recorded (see gaps)."
+                )
             else:
                 f.summary = (
                     f"No file changes by {ctx.subject.username} recorded in "

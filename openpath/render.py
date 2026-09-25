@@ -165,6 +165,7 @@ def render_text(result: AnalysisResult, *, verbose: bool = False) -> str:
                         lines.append(f"        {src} {loc}: {raw}")
 
     # Gaps (the honesty layer).
+    from openpath.model.evidence_matrix import Confidence
     lines.append("")
     if f.gaps:
         lines.append(f"GAPS  ({len(f.gaps)} thing(s) not fully determinable)")
@@ -172,9 +173,14 @@ def render_text(result: AnalysisResult, *, verbose: bool = False) -> str:
             lines.append(f"  - [{g.question}] {g.reason}")
             if g.remedy:
                 lines.append(f"      remedy: {g.remedy}")
-    else:
+    elif f.confidence in (None, Confidence.CERTIFIED):
         lines.append("GAPS  (none for this question -- the answer is fully "
                      "substantiated and complete)")
+    else:
+        # Not CERTIFIED but no question-local gap: the caveat lives in the
+        # CONFIDENCE note and the coverage ledger. Never claim completeness here.
+        lines.append("GAPS  (a scope/coverage caveat applies -- see the CONFIDENCE "
+                     "note above and the Gaps question / --coverage for the ledger)")
 
     lines.append("")
     return "\n".join(lines)

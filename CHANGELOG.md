@@ -28,7 +28,15 @@ based on Keep a Changelog; dates are UTC.
   downgrades Network to PARTIAL; the auth-only accounts/groups path discloses its
   no-actor attribution limit. Covered by `TestFederatedEvidence` (drop-any-source
   resilience matrix), `TestConfidenceInvariants` (label never contradicts finding),
-  and `TestSpecConsistency` (matrix and facet requirements cannot drift).
+  and `TestSpecConsistency` (matrix and facet requirements cannot drift). A second
+  adversarial review — of the implementation — found and fixed six more defects,
+  each now locked by a regression test: a narrow `-w` watch or connect-only rule
+  with zero events was a PARTIAL "see gaps" over an unsound certified negative
+  pointing at a gap that did not exist (Files/Network now emit a real scope gap and
+  a scope-qualified negative); a consumed-but-not-winning source that dropped
+  records no longer stays CERTIFIED; auth-only package attribution is PARTIAL with a
+  disclosed sudo-only limit; and the per-answer GAPS section never claims
+  completeness under a non-CERTIFIED confidence.
 - **Evidence conservation (no silent loss).** Every collector now reports
   `records_scanned` and `unparseable`; a record that is read but cannot be decoded
   is **counted and disclosed** as a `conservation` gap instead of vanishing. Wired

@@ -142,19 +142,25 @@ def assess(spec: EvidenceSpec, ledger: CoverageLedger, finding) -> Assessment:
     if conf is Confidence.UNANSWERABLE and has_events:
         conf = Confidence.PARTIAL
 
-    # Coverage-derived degrade: a conservation or retention shortfall on a winning
-    # source means "certified only for the covered sub-interval".
+    # Coverage-derived degrade: a conservation or retention shortfall on ANY source
+    # the answer actually rests on -- the winning group OR any source that supplied
+    # the finding's shown events -- means "certified only for the covered
+    # sub-interval". Checking the cited sources too closes the hole where a
+    # supporting source (e.g. wtmp) feeds the events but dropped records unnoticed.
     degrade = None
-    if conf is Confidence.CERTIFIED and winning:
-        win_ids = {sid for (sid, _i) in winning}
-        for sid in win_ids:
+    if conf is Confidence.CERTIFIED:
+        rest_on = {sid for (sid, _i) in (winning or ())}
+        rest_on |= {getattr(e, "source_id", None)
+                    for e in getattr(finding, "events", []) or ()}
+        rest_on.discard(None)
+        for sid in sorted(rest_on):
             cov = ledger.get(sid)
             if cov and cov.unparseable:
                 degrade = f"{sid} has undecodable records"
                 break
         if degrade is None:
             shortfalls = {g.source_id for g in ledger.horizon_shortfalls()}
-            hit = win_ids & shortfalls
+            hit = rest_on & shortfalls
             if hit:
                 degrade = f"{sorted(hit)[0]} has a retention shortfall"
     if degrade:

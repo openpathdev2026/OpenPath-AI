@@ -13,7 +13,7 @@ import os
 from datetime import timedelta
 from typing import List, Tuple
 
-from openpath.facets.base import AnalysisContext, Facet, Requirement
+from openpath.facets.base import AnalysisContext, Facet, Requirement, source_met
 from openpath.model.citation import Citation
 from openpath.model.coverage import Gap
 from openpath.model.event import Event, EventType
@@ -108,6 +108,22 @@ class PackagesFacet(Facet):
 
         attributed, host_changes, can_attribute = attribute_packages(ctx)
         f.events = attributed
+
+        # Without command auditing (execve), attribution rests on sudo-invoked
+        # package managers in auth.log: a change made without sudo (e.g. from a root
+        # shell) is not attributed. Disclose that so the (at best PARTIAL) answer is
+        # backed by a real gap, never a bare "see gaps".
+        exec_audited = source_met(ctx, "auditd", "execve audit rule")
+        if host_changes and can_attribute and not exec_audited:
+            f.gaps.append(Gap(
+                "Packages",
+                "package attribution rests on sudo-invoked package-manager commands "
+                "(auth.log); a change made without sudo, or by another principal, is "
+                "not attributed without command auditing (execve).",
+                "auditd",
+                "add an execve audit rule so package-manager invocations are recorded "
+                "with the invoking user (auid).",
+            ))
 
         if not host_changes:
             if any(g.question == "Packages" for g in f.gaps):
