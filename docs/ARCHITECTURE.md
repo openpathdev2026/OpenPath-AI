@@ -57,7 +57,7 @@ each subject against the shared event set.
 | `model/identity.py` | `resolve_identity` (name→subject) and `resolve_name_for_uid` (uid→name), both time-bounded. |
 | `model/coverage.py` | `SourceCoverage`, `Gap`, `CoverageLedger`; horizon + retention logic. |
 | `model/finding.py` | `Finding`: a facet's answer (summary + events + gaps). |
-| `sources/` | Collectors: `wtmp` (binary), `auditd` (streaming), `journal_sshd`, `packages` (dnf/dpkg). |
+| `sources/` | Collectors: `wtmp` (binary), `auditd` (streaming), `auth` (syslog auth.log/secure), `journal_sshd`, `packages` (dnf/dpkg). |
 | `facets/` | One analyzer per question family + `attribution` + Core/Evidence/Gaps aggregators. |
 | `engine.py` | Collect → resolve identity → run facet; single- and multi-user. |
 | `router.py` | Natural-language question → facet + subject + time (convenience). |

@@ -2,9 +2,27 @@
 
 from __future__ import annotations
 
-from openpath.facets.base import AnalysisContext, Facet, Requirement
+from openpath.facets.base import AnalysisContext, AnyOf, Facet, Requirement
 from openpath.model.event import EventType
 from openpath.model.finding import Finding
+
+
+def _dedup_ssh(events):
+    """Collapse the same SSH auth event reported by both the journal and auth.log.
+
+    journald and syslog record the identical sshd line, so an event keyed by
+    (result, ip, port) within the same ~2s bucket is one login, not two.
+    """
+    seen = set()
+    out = []
+    for e in sorted(events, key=lambda x: x.ts):
+        key = (e.attrs.get("result"), e.attrs.get("ip"),
+               e.attrs.get("port"), int(e.ts.timestamp()) // 2)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(e)
+    return out
 
 
 class SessionsFacet(Facet):
@@ -53,8 +71,11 @@ class SessionsFacet(Facet):
 class LoginFacet(Facet):
     name = "login"
     question_family = "Login"
+    # Login can be established from wtmp sessions or from an sshd auth record
+    # (journald export or syslog auth.log).
     requirements = (
-        Requirement("wtmp", "Login", instrument="wtmp accounting present"),
+        AnyOf("Login", [("wtmp", "wtmp accounting present"),
+                        ("journal.sshd", None), ("auth", None)]),
     )
 
     def analyze(self, ctx: AnalysisContext) -> Finding:
@@ -62,7 +83,7 @@ class LoginFacet(Facet):
         f.gaps.extend(self._prereq_gaps(ctx))
 
         sessions = ctx.subject_events([EventType.SESSION])
-        ssh = ctx.subject_events([EventType.SSH_AUTH])
+        ssh = _dedup_ssh(ctx.subject_events([EventType.SSH_AUTH]))
         f.events = sessions + ssh
         f.events.sort(key=lambda e: e.ts)
 
@@ -84,14 +105,18 @@ class LoginFacet(Facet):
                 )
             return f
 
-        first = sessions[0] if sessions else None
+        accepted = [e for e in ssh if e.attrs.get("result") == "accepted"]
+        # Prefer wtmp session count; fall back to accepted SSH logins when wtmp
+        # is unavailable (e.g. a host with only auth.log).
+        login_events = sessions if sessions else accepted
+        first = login_events[0] if login_events else None
         origins = sorted({
             e.attrs.get("origin") for e in sessions if e.attrs.get("origin")
         } | {
             e.attrs.get("ip") for e in ssh if e.attrs.get("ip")
         } - {None})
         f.summary = (
-            f"{ctx.subject.username} logged in {len(sessions)} time(s)"
+            f"{ctx.subject.username} logged in {len(login_events)} time(s)"
             + (f", first at {first.ts.isoformat()}" if first else "")
             + (f"; origins: {', '.join(origins)}" if origins else "")
             + "."

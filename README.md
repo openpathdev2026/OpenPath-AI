@@ -72,6 +72,15 @@ limit is stated.
 
 `openpath-ai --list-families` prints them.
 
+### Works with or without auditd
+
+auditd gives the fullest picture, but most stock **Debian/Ubuntu** servers don't
+run it. OpenPath also reads syslog `auth.log` / `secure`, so on those hosts it
+still answers Login, Privilege, Accounts, and sudo-invoked Commands/Root-activity,
+and attributes package changes via the user's sudo command — while **disclosing**
+that non-sudo commands and file/network activity need an auditd rule. When both
+sources exist, auditd is authoritative and duplicates are dropped.
+
 ## Why "any user, not just the ones that exist" is the hard part
 
 The naive approach — look up the name in the current `/etc/passwd`, get a UID,

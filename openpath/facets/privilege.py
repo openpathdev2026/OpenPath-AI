@@ -6,7 +6,14 @@ from openpath.facets.attribution import (
     attribute_root_actions,
     summarize_responsibility,
 )
-from openpath.facets.base import AnalysisContext, Facet, Requirement
+from openpath.facets.base import (
+    AnalysisContext,
+    AnyOf,
+    Facet,
+    Requirement,
+    prefer_primary,
+    source_met,
+)
 from openpath.model.coverage import Gap
 from openpath.model.event import EventType
 from openpath.model.finding import Finding
@@ -14,6 +21,10 @@ from openpath.model.finding import Finding
 _EXEC_REMEDY = (
     "add an execve audit rule: "
     "-a always,exit -F arch=b64 -S execve -S execveat -k exec"
+)
+_PARTIAL_CMD = (
+    "auth.log/secure captures commands run via sudo, but not ordinary (non-sudo) "
+    "command execution; add an execve audit rule for complete command visibility."
 )
 
 
@@ -30,10 +41,10 @@ class PrivilegeFacet(Facet):
 
     name = "privilege"
     question_family = "Privilege"
-    # sudo/su USER_* records are emitted by PAM whenever auditd runs -- no syscall
-    # rule needed -- so the only hard requirement is that auditd is present.
+    # Privilege escalation is recorded by auditd (USER_CMD/USER_START) or by syslog
+    # (sudo/su lines in auth.log/secure) -- either answers the question.
     requirements = (
-        Requirement("auditd", "Privilege", instrument="auditd rules loaded"),
+        AnyOf("Privilege", [("auditd", "auditd rules loaded"), ("auth", None)]),
     )
 
     def analyze(self, ctx: AnalysisContext) -> Finding:
@@ -48,11 +59,13 @@ class PrivilegeFacet(Facet):
         else:
             direct_logins = []
 
-        escalations = ctx.subject_events([EventType.PRIVILEGE_ESCALATION])
-        root_execs = [
+        escalations = prefer_primary(
+            ctx, ctx.subject_events([EventType.PRIVILEGE_ESCALATION]),
+            need_execve=False)
+        root_execs = prefer_primary(ctx, [
             e for e in ctx.subject_events([EventType.EXEC])
             if e.attrs.get("as_root")
-        ]
+        ], need_execve=True)
         f.events = sorted(escalations + root_execs + direct_logins,
                           key=lambda e: e.ts)
 
@@ -99,10 +112,12 @@ class PrivilegeFacet(Facet):
                 )
                 f.events = failed
             elif not any(g.question == "Privilege" for g in f.gaps):
+                src = "auditd" if source_met(ctx, "auditd", "auditd rules loaded") \
+                    else "auth.log"
                 f.summary = (
                     f"No, {ctx.subject.username} did not become root in "
                     f"{ctx.window.label or 'the window'} (no sudo/su and no root "
-                    f"execution recorded; auditd was present)."
+                    f"execution recorded; {src} was present)."
                 )
             else:
                 f.summary = f"Cannot determine whether {ctx.subject.username} became root (see gaps)."
@@ -110,14 +125,17 @@ class PrivilegeFacet(Facet):
         return self._finalize(ctx, f)
 
     def _finalize(self, ctx: AnalysisContext, f: Finding) -> Finding:
-        # If we can see sudo but not exec, disclose the partial visibility.
-        auditd = ctx.ledger.get("auditd")
-        if auditd is not None and not auditd.has_instrument("execve audit rule"):
+        # Sudo/su usage is visible, but if full process execution isn't audited we
+        # can't see the full extent of what was done as root. Disclose that whether
+        # the gap is a missing execve rule or an auth.log-only (no auditd) host.
+        if not source_met(ctx, "auditd", "execve audit rule") and (
+            f.events or source_met(ctx, "auth")
+        ):
             f.gaps.append(Gap(
                 "Privilege",
-                "sudo/su usage is visible, but commands executed as root are not "
-                "recorded without an execve rule, so the full extent of root "
-                "activity cannot be confirmed.",
+                "privilege escalation is visible, but commands executed as root "
+                "are not fully recorded (only sudo-invoked commands, if any), so "
+                "the full extent of root activity cannot be confirmed.",
                 "auditd", _EXEC_REMEDY,
             ))
         return f
@@ -136,8 +154,9 @@ class RootActivityFacet(Facet):
     name = "root_activity"
     question_family = "Root activity"
     requirements = (
-        Requirement("auditd", "Root activity", instrument="execve audit rule",
-                    remedy=_EXEC_REMEDY),
+        AnyOf("Root activity",
+              [("auditd", "execve audit rule"), ("auth", None)],
+              remedy=_EXEC_REMEDY),
     )
 
     _TYPES = [EventType.EXEC, EventType.FILE_CHANGE, EventType.NETWORK]
@@ -152,6 +171,8 @@ class RootActivityFacet(Facet):
             candidates = [e for e in ctx.events if e.type in self._TYPES]
         else:
             candidates = ctx.subject_events(self._TYPES)
+        # Avoid double-counting a sudo command that auditd also recorded.
+        candidates = prefer_primary(ctx, candidates, need_execve=True)
         pairs = attribute_root_actions(ctx, candidates)
         pairs.sort(key=lambda p: p[0].ts)
         if subject_is_root:
@@ -208,6 +229,17 @@ class RootActivityFacet(Facet):
                 "record loginuid for service managers, or correlate with "
                 "scheduler/unit logs, to attribute automated root activity.",
             ))
+
+        # If we only have auth.log (no execve rule), we see sudo commands but not
+        # file/network activity or non-sudo commands done as root -- disclose it.
+        if not source_met(ctx, "auditd", "execve audit rule"):
+            f.gaps.append(Gap(
+                "Root activity",
+                "only commands run via sudo are captured (auth.log); file and "
+                "network activity performed as root, and non-sudo root commands, "
+                "are not recorded without an execve rule.",
+                "auditd", _EXEC_REMEDY,
+            ))
         return f
 
 
@@ -217,19 +249,26 @@ class CommandsFacet(Facet):
     name = "commands"
     question_family = "Commands"
     requirements = (
-        Requirement("auditd", "Commands", instrument="execve audit rule",
-                    remedy=_EXEC_REMEDY),
+        AnyOf("Commands",
+              [("auditd", "execve audit rule"), ("auth", None)],
+              remedy=_EXEC_REMEDY),
     )
 
     def analyze(self, ctx: AnalysisContext) -> Finding:
         f = self._new_finding(ctx)
         f.gaps.extend(self._prereq_gaps(ctx))
 
-        execs = ctx.subject_events([EventType.EXEC])
+        execs = prefer_primary(ctx, ctx.subject_events([EventType.EXEC]),
+                               need_execve=True)
         f.events = execs
 
+        # If we can see sudo commands (auth.log) but not general execution, say so.
+        if not source_met(ctx, "auditd", "execve audit rule") and source_met(ctx, "auth"):
+            f.gaps.append(Gap("Commands", _PARTIAL_CMD, "auditd", _EXEC_REMEDY))
+
         if not execs:
-            if any(g.question == "Commands" for g in f.gaps):
+            if any(g.question == "Commands" and g.reason != _PARTIAL_CMD
+                   for g in f.gaps):
                 f.summary = f"Cannot determine {ctx.subject.username}'s commands (see gaps)."
             else:
                 f.summary = (

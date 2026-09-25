@@ -48,8 +48,14 @@ def attribute_packages(
     host_changes = [e for e in ctx.events if e.type == EventType.PACKAGE_CHANGE]
     host_changes.sort(key=lambda e: e.ts)
 
+    # Attribution needs to see the subject run a package manager. That comes from
+    # an audited execve, or from a sudo package-manager command in auth.log.
     auditd = ctx.ledger.get("auditd")
-    can_attribute = bool(auditd and auditd.has_instrument("execve audit rule"))
+    auth = ctx.ledger.get("auth")
+    can_attribute = bool(
+        (auditd and auditd.has_instrument("execve audit rule"))
+        or (auth and auth.status.value in ("available", "empty"))
+    )
 
     if not can_attribute:
         return [], host_changes, False

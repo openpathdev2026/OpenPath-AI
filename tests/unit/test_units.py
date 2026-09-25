@@ -133,5 +133,17 @@ class TestWtmpStruct(unittest.TestCase):
         self.assertEqual(_UTMP_STRUCT.size, 384)
 
 
+class TestSyslogTime(unittest.TestCase):
+    def test_traditional_year_inferred_not_in_future(self):
+        from openpath.sources.auth import _parse_traditional_ts
+        # "now" is 2026-01-05; a "Dec 31 23:00" line must be 2025, not 2026.
+        now = datetime(2026, 1, 5, 12, 0, tzinfo=UTC)
+        ts = _parse_traditional_ts("Dec", "31", "23:00:00", now, UTC)
+        self.assertEqual(ts.year, 2025)
+        # a same-year September line stays in the current year
+        ts2 = _parse_traditional_ts("Jan", "3", "09:00:00", now, UTC)
+        self.assertEqual(ts2.year, 2026)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -69,17 +69,72 @@ class Requirement:
     remedy: Optional[str] = None
 
 
-def check_prereqs(ctx: AnalysisContext, requirements: Sequence[Requirement]) -> List[Gap]:
-    """Return a gap for every unmet requirement.
+@dataclass(frozen=True)
+class AnyOf:
+    """Satisfied if ANY of several (source_id, instrument) options is available.
+
+    Used where more than one evidence source can answer a question -- e.g. auditd
+    OR syslog auth.log can both establish privilege escalation.
+    """
+
+    question: str
+    options: Sequence  # of (source_id, instrument_or_None)
+    remedy: Optional[str] = None
+
+
+def source_met(ctx: AnalysisContext, source_id: str,
+               instrument: Optional[str] = None) -> bool:
+    cov = ctx.ledger.get(source_id)
+    if cov is None or cov.status in (
+        SourceStatus.ABSENT, SourceStatus.UNREADABLE, SourceStatus.OUT_OF_HORIZON,
+    ):
+        return False
+    if instrument is not None and not cov.has_instrument(instrument):
+        return False
+    return True
+
+
+def prefer_primary(ctx: AnalysisContext, events: List[Event], *,
+                   need_execve: bool) -> List[Event]:
+    """Drop auth-log duplicates of exec/privilege when auditd already covers them.
+
+    auditd is the more complete source; on a host running both auditd and syslog
+    the same sudo command appears in each. When auditd authoritatively covers the
+    relevant activity we drop the ``auth`` copies to avoid double counting.
+    """
+    auditd = ctx.ledger.get("auditd")
+    if auditd is None or auditd.status not in (
+        SourceStatus.AVAILABLE, SourceStatus.EMPTY,
+    ):
+        return events
+    instrument = "execve audit rule" if need_execve else "auditd rules loaded"
+    if not auditd.has_instrument(instrument):
+        return events
+    return [e for e in events if e.source_id != "auth"]
+
+
+def check_prereqs(ctx: AnalysisContext, requirements: Sequence) -> List[Gap]:
+    """Return a gap for every unmet requirement (Requirement or AnyOf).
 
     A requirement is unmet when the source is absent/unreadable/out-of-horizon,
-    or when its named instrumentation check is not present. The instrumentation
-    check's ``detail`` (the human explanation) is folded into the gap ``reason``;
-    the actionable fix, when there is one, comes from the requirement's own
-    ``remedy`` field.
+    or when its named instrumentation check is not present. An AnyOf is unmet only
+    when none of its options is available. The instrumentation check's ``detail``
+    is folded into the gap ``reason``; the actionable fix comes from ``remedy``.
     """
     gaps: List[Gap] = []
     for req in requirements:
+        if isinstance(req, AnyOf):
+            if any(source_met(ctx, sid, instr) for (sid, instr) in req.options):
+                continue
+            opts = ", ".join(
+                sid + (f"({instr})" if instr else "") for (sid, instr) in req.options)
+            gaps.append(Gap(
+                req.question,
+                f"none of the sources that could answer this is available "
+                f"[{opts}]; absence of results does not mean the user did nothing.",
+                None, req.remedy))
+            continue
+
         cov = ctx.ledger.get(req.source_id)
         if cov is None or cov.status in (
             SourceStatus.ABSENT,

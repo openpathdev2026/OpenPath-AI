@@ -101,8 +101,15 @@ def classify_root_action(event: Event, ctx: AnalysisContext,
         root_sessions = _root_sessions(ctx)
     auid = event.auid
 
-    # No login uid at all -> daemon/system, not a human.
+    # No login uid (e.g. a syslog/auth.log record) -- but the line may still name
+    # the human who acted (a sudo invoker, an su caller). Credit them.
     if auid is None:
+        if event.actor_name and event.actor_name != "root":
+            return Attribution(
+                ESCALATED, event.actor_name,
+                detail="attributed by account name from auth.log (sudo/su)",
+                named=True)
+        # Otherwise no human is identifiable -> daemon/system.
         return Attribution(DAEMON, None, detail="no login uid recorded")
 
     # Login uid 0 -> the login session itself was root.

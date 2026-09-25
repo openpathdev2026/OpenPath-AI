@@ -8,6 +8,7 @@ runs for a full analysis.
 from typing import List
 
 from openpath.sources.auditd import AuditdCollector
+from openpath.sources.auth import SyslogAuthCollector
 from openpath.sources.base import CollectResult, Collector
 from openpath.sources.journal_sshd import SshdJournalCollector
 from openpath.sources.packages import PackageCollector
@@ -19,6 +20,7 @@ def default_collectors() -> List[Collector]:
         WtmpCollector(),
         SshdJournalCollector(),
         AuditdCollector(),
+        SyslogAuthCollector(),
         PackageCollector(),
     ]
 
@@ -29,6 +31,7 @@ __all__ = [
     "WtmpCollector",
     "SshdJournalCollector",
     "AuditdCollector",
+    "SyslogAuthCollector",
     "PackageCollector",
     "default_collectors",
 ]

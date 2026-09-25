@@ -78,6 +78,7 @@ class HostBuilder:
         self._passwd: List[tuple] = []
         self._group: List[tuple] = []
         self._rules: List[str] = []
+        self._authlog: List[str] = []
         self._serial = itertools.count(1000)
         self.auditd_present = True
 
@@ -271,6 +272,58 @@ class HostBuilder:
             f"hostname=h addr=? terminal=pts/0 res={res}'")
         return self
 
+    # -- syslog auth.log (Debian/Ubuntu) ------------------------------------ #
+
+    def _syslog(self, at, proc, msg):
+        local = at.astimezone(self.tz)
+        # Traditional syslog: "Mon _D HH:MM:SS" (day space-padded to width 2).
+        stamp = local.strftime("%b ") + f"{local.day:2d}" + local.strftime(" %H:%M:%S")
+        self._authlog.append(f"{stamp} host {proc}: {msg}")
+
+    def auth_sudo(self, user, cmd, at, target="root", tty="pts/0", pwd=None):
+        pwd = pwd or f"/home/{user}"
+        self._syslog(at, "sudo",
+                     f"  {user} : TTY={tty} ; PWD={pwd} ; USER={target} ; "
+                     f"COMMAND={cmd}")
+        return self
+
+    def auth_sudo_fail(self, user, at, tty="pts/0"):
+        self._syslog(at, "sudo",
+                     f"  {user} : user NOT in sudoers ; TTY={tty} ; "
+                     f"PWD=/home/{user} ; USER=root ; COMMAND=/bin/sh")
+        return self
+
+    def auth_ssh_accept(self, user, ip, at, method="publickey", port=51000):
+        self._syslog(at, "sshd[1200]",
+                     f"Accepted {method} for {user} from {ip} port {port} ssh2")
+        return self
+
+    def auth_ssh_fail(self, user, ip, at, method="password", port=51000):
+        self._syslog(at, "sshd[1200]",
+                     f"Failed {method} for {user} from {ip} port {port} ssh2")
+        return self
+
+    def auth_su(self, by, at, target="root", by_uid=1001):
+        self._syslog(at, "su[1300]",
+                     f"pam_unix(su-l:session): session opened for user "
+                     f"{target}(uid=0) by {by}(uid={by_uid})")
+        return self
+
+    def auth_useradd(self, name, uid, at, gid=None):
+        gid = uid if gid is None else gid
+        self._syslog(at, "useradd[1400]",
+                     f"new user: name={name}, UID={uid}, GID={gid}, "
+                     f"home=/home/{name}, shell=/bin/bash")
+        return self
+
+    def auth_userdel(self, name, at):
+        self._syslog(at, "userdel[1401]", f"delete user '{name}'")
+        return self
+
+    def auth_groupadd(self, name, gid, at):
+        self._syslog(at, "groupadd[1402]", f"new group: name={name}, GID={gid}")
+        return self
+
     # -- packages ----------------------------------------------------------- #
 
     def pkg(self, verb, nevra, at):
@@ -324,6 +377,10 @@ class HostBuilder:
             (self.root / "var/log/dnf.rpm.log").write_text("\n".join(self._dnf) + "\n")
         if self._dpkg:
             (self.root / "var/log/dpkg.log").write_text("\n".join(self._dpkg) + "\n")
+        if self._authlog:
+            (self.root / "var/log").mkdir(parents=True, exist_ok=True)
+            (self.root / "var/log/auth.log").write_text(
+                "\n".join(self._authlog) + "\n")
         if self._journal:
             (self.root / "var/log/openpath/journal-sshd.jsonl").write_text(
                 "\n".join(json.dumps(e) for e in self._journal) + "\n")

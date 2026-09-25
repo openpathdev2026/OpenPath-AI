@@ -619,6 +619,145 @@ class TestStreaming(Base):
         self.assertEqual(f.events[0].attrs.get("as_root"), True)
 
 
+class TestSyslogAuth(Base):
+    """Debian/Ubuntu hosts without auditd: sudo/ssh/su/account events from
+    /var/log/auth.log make Privilege, Login, Accounts, and sudo-Commands
+    answerable -- with honest disclosure of what syslog does not capture."""
+
+    def _debian_host(self) -> Path:
+        root = self.make_root()
+        h = HostBuilder(root).no_auditd()
+        h.passwd("root", 0).passwd("alice", 1001).passwd("bob", 1002)
+        h.boot(ago(hours=20))
+        h.login("alice", ago(hours=3), host="203.0.113.7", until=ago(hours=1))
+        h.auth_ssh_accept("alice", "203.0.113.7", ago(hours=3, minutes=1))
+        h.auth_sudo("alice", "/usr/bin/apt install -y nginx", ago(hours=2, minutes=40))
+        h.dpkg("install", "nginx:amd64", "<none>", "1.24.0-1", ago(hours=2, minutes=39))
+        h.auth_sudo("alice", "/usr/sbin/useradd deploybot", ago(hours=2, minutes=10))
+        h.auth_useradd("deploybot", 1500, ago(hours=2, minutes=9))
+        h.auth_su("bob", ago(hours=1, minutes=30))
+        h.write()
+        return root
+
+    def test_privilege_from_sudo_and_su(self):
+        root = self._debian_host()
+        pa = self.finding(root, "alice", "privilege")
+        self.assertTrue(pa.summary.startswith("Yes"))
+        # discloses that full (non-sudo) command visibility needs auditd
+        self.assertTrue(any(g.question == "Privilege" for g in pa.gaps))
+        pb = self.finding(root, "bob", "privilege")
+        self.assertTrue(pb.summary.startswith("Yes"))  # via su
+
+    def test_commands_partial_and_disclosed(self):
+        root = self._debian_host()
+        f = self.finding(root, "alice", "commands")
+        cmds = [e.attrs.get("cmdline") for e in f.events]
+        self.assertIn("/usr/bin/apt install -y nginx", cmds)
+        self.assertTrue(any("sudo" in g.reason for g in f.gaps))  # partial disclosed
+
+    def test_login_from_wtmp_and_auth(self):
+        root = self._debian_host()
+        f = self.finding(root, "alice", "login")
+        self.assertIn("203.0.113.7", f.summary)
+        self.assertEqual([g for g in f.gaps if g.question == "Login"], [])
+
+    def test_accounts_attributed_via_sudo_admin_command(self):
+        root = self._debian_host()
+        f = self.finding(root, "alice", "accounts")
+        joined = f.summary + " " + " ".join(f.notes)
+        self.assertIn("useradd deploybot", joined)
+
+    def test_packages_attributed_via_auth_sudo(self):
+        root = self._debian_host()
+        f = self.finding(root, "alice", "packages")
+        self.assertEqual(len(f.events), 1)
+        self.assertIn("nginx", f.events[0].summary)
+
+    def test_files_and_network_still_disclosed_absent(self):
+        root = self._debian_host()
+        for facet in ("files", "network"):
+            f = self.finding(root, "alice", facet)
+            self.assertEqual(len(f.events), 0)
+            self.assertTrue(f.gaps)  # auditd genuinely required for these
+
+    def test_login_from_auth_only_without_wtmp(self):
+        # A host with no wtmp but an sshd auth record still answers Login.
+        root = self.make_root()
+        h = HostBuilder(root).no_auditd()
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.auth_ssh_accept("alice", "198.51.100.7", ago(hours=2))
+        h.write()
+        f = self.finding(root, "alice", "login")
+        self.assertIn("198.51.100.7", f.summary)
+        self.assertGreaterEqual(len(f.events), 1)
+
+    def test_denied_sudo_is_not_a_successful_escalation(self):
+        # A denied sudo line carries COMMAND= but must never read as success.
+        root = self.make_root()
+        h = HostBuilder(root).no_auditd()
+        h.passwd("root", 0).passwd("mallory", 1005)
+        h.auth_sudo_fail("mallory", ago(hours=2))
+        h.write()
+        pr = self.finding(root, "mallory", "privilege")
+        self.assertFalse(pr.summary.startswith("Yes"))
+        # and no root command is attributed to a denied attempt
+        self.assertEqual(len(self.finding(root, "mallory", "commands").events), 0)
+
+    def test_pam_auth_failure_line_does_not_create_garbage_actor(self):
+        root = self.make_root()
+        (root / "var/log").mkdir(parents=True)
+        stamp = ago(hours=2).strftime("%b ") + f"{ago(hours=2).day:2d}" \
+            + ago(hours=2).strftime(" %H:%M:%S")
+        (root / "var/log/auth.log").write_text(
+            f"{stamp} host sudo: pam_unix(sudo:auth): authentication failure; "
+            f"logname=alice uid=1001 euid=0 tty=/dev/pts/0 ruser=alice user=alice\n")
+        (root / "etc").mkdir(parents=True)
+        (root / "etc/passwd").write_text("alice:x:1001:1001::/home/alice:/bin/bash\n")
+        collected = Engine().collect(Env(data_root=root, now=NOW, local_tz=timezone.utc),
+                                     self.win())
+        for e in collected.events:
+            self.assertNotIn("(", e.actor_name or "")
+
+    def test_legacy_su_plus_form_is_captured(self):
+        root = self.make_root()
+        (root / "var/log").mkdir(parents=True)
+        t = ago(hours=2)
+        stamp = t.strftime("%b ") + f"{t.day:2d}" + t.strftime(" %H:%M:%S")
+        (root / "var/log/auth.log").write_text(
+            f"{stamp} host su: + pts/1 alice:root\n")
+        (root / "etc").mkdir(parents=True)
+        (root / "etc/passwd").write_text("alice:x:1001:1001::/home/alice:/bin/bash\n")
+        f = self.finding(root, "alice", "privilege")
+        self.assertTrue(f.summary.startswith("Yes"))
+
+    def test_login_deduped_across_journal_and_auth(self):
+        # No wtmp; the same login is in both the journal export and auth.log.
+        root = self.make_root()
+        h = HostBuilder(root).no_auditd()
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.ssh_accept("alice", "203.0.113.7", ago(hours=2))           # journal
+        h.auth_ssh_accept("alice", "203.0.113.7", ago(hours=2))       # auth.log
+        h.write()
+        f = self.finding(root, "alice", "login")
+        self.assertIn("logged in 1 time(s)", f.summary)
+
+    def test_no_double_count_when_auditd_and_auth_both_present(self):
+        root = self.make_root()
+        h = HostBuilder(root)  # auditd present
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.enable_execve()
+        h.boot(ago(hours=10))
+        h.sudo(1001, 1001, "/usr/bin/dnf install nginx", ago(hours=2))
+        h.exec(1001, 0, ["dnf", "install", "nginx"], "/usr/bin/dnf",
+               ago(hours=2), euid=0, comm="dnf")
+        h.auth_sudo("alice", "/usr/bin/dnf install nginx", ago(hours=2))
+        h.write()
+        f = self.finding(root, "alice", "commands")
+        # auditd is authoritative; the auth-log duplicate is dropped.
+        self.assertEqual(len(f.events), 1)
+        self.assertEqual(f.events[0].source_id, "auditd")
+
+
 class TestSerialization(Base):
     def test_json_and_text_render(self):
         root = self.fully_instrumented()

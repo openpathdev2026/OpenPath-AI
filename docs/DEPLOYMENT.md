@@ -34,6 +34,15 @@ If you skip this, OpenPath still runs — it will **disclose** the missing
 instrumentation as gaps (with the exact rule to add) rather than return false
 negatives. That is the intended degraded mode, not an error.
 
+**Hosts without auditd (most stock Debian/Ubuntu).** OpenPath also reads
+`/var/log/auth.log` (Debian/Ubuntu) or `/var/log/secure` (RHEL), which record
+sudo, su, ssh, and account changes by default — no rules needed. On such a host
+it answers **Login, Privilege, Accounts, sudo-Commands, sudo-Root-activity**, and
+attributes **package** changes to the user via their sudo package-manager command.
+It discloses what syslog cannot capture: **non-sudo command execution** and **file
+/ network activity** still require an auditd execve/watch rule. When both auditd
+and syslog are present, auditd is authoritative and duplicates are dropped.
+
 ## 3. Run
 
 Ask a question (natural language, or explicit flags):

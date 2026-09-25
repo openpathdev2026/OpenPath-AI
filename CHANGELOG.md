@@ -6,6 +6,16 @@ based on Keep a Changelog; dates are UTC.
 ## [Unreleased]
 
 ### Added
+- **Syslog auth collector (`auth`).** Reads `/var/log/auth.log` (Debian/Ubuntu)
+  and `/var/log/secure` (RHEL), so hosts **without auditd** still answer Login,
+  Privilege, Accounts, and sudo-invoked Commands/Root-activity, and attribute
+  package changes via the user's sudo package-manager command. Events are
+  attributed by account name (the log line names the human). Facet coverage is
+  now "auditd **or** auth" (an `AnyOf` requirement); when both are present auditd
+  is authoritative and auth-log duplicates are dropped. What syslog cannot capture
+  — non-sudo command execution, file/network activity — is disclosed as a gap.
+  Root attribution now credits the named sudo/su user when there is no login uid.
+  CI workflow added (`.github/workflows/ci.yml`, Python 3.9/3.11/3.12).
 - **Flowing narrative output.** Activity facets now render as flowing sentences
   that name the actor, the action, and the **object acted against** (file,
   command, endpoint, account, group, package), each with an `[E#]` evidence
