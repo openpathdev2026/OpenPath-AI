@@ -111,6 +111,59 @@ def render_readiness(report: ReadinessReport) -> str:
     return "\n".join(lines)
 
 
+def render_contract(rows) -> str:
+    """The production-contract scoreboard: per-question certification status."""
+    from collections import defaultdict
+    from openpath.contract import CatalogStatus, status_counts
+    counts = status_counts()
+    certified = [q for q in rows if q.status is CatalogStatus.CERTIFIED]
+    contracted = [q for q in rows if q.status is CatalogStatus.CONTRACTED]
+    lines: List[str] = []
+    lines.append("=" * 72)
+    lines.append("OpenPath | Production question contract")
+    lines.append(f"{len(rows)} questions  |  CERTIFIED "
+                 f"{counts[CatalogStatus.CERTIFIED]}  CONTRACTED "
+                 f"{counts[CatalogStatus.CONTRACTED]}")
+    lines.append("=" * 72)
+    lines.append("Certification is a per-question status, not a limit on which questions")
+    lines.append("exist. CERTIFIED = wired and proven end-to-end today. CONTRACTED = in the")
+    lines.append("contract but needs the named collector or subsystem first; it is never")
+    lines.append("answered from thin air.")
+    lines.append("")
+    lines.append(f"CERTIFIED ({len(certified)}) -- answerable today:")
+    for q in certified:
+        lines.append(f"  [C] {q.id}  {q.question}")
+    lines.append("")
+    lines.append(f"CONTRACTED ({len(contracted)}) -- roadmap, grouped by what unblocks them:")
+    groups = defaultdict(list)
+    for q in contracted:
+        groups[q.needs].append(q)
+    for need in sorted(groups, key=lambda n: (-len(groups[n]), n)):
+        ids = ", ".join(q.id for q in groups[need])
+        lines.append(f"  {len(groups[need]):2d}x  {need}")
+        lines.append(f"        {ids}")
+    lines.append("")
+    lines.append("Full per-question detail (sources, blind spots): "
+                 "docs/PRODUCTION-CATALOG.md")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def render_contract_json(rows) -> str:
+    from openpath.contract import status_counts
+    payload = {
+        "total": len(rows),
+        "counts": {s.value: n for s, n in status_counts().items()},
+        "questions": [
+            {"id": q.id, "question": q.question, "facet": q.facet,
+             "status": q.status.value, "needs": q.needs,
+             "sources": list(q.sources), "blind_spots": q.blind_spots}
+            for q in rows
+        ],
+    }
+    return json.dumps(payload, indent=2)
+
+
 def render_text(result: AnalysisResult, *, verbose: bool = False) -> str:
     f = result.finding
     lines: List[str] = []

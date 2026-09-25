@@ -1267,6 +1267,50 @@ class TestSpecConsistency(Base):
             self.assertEqual(spec_for_facet(agg).derived_from, _DATA_FACETS, agg)
 
 
+class TestProductionContract(Base):
+    """The full production contract is honest: CERTIFIED == the wired core, and
+    every CONTRACTED question names what it needs and is never silently answered."""
+
+    def test_certified_set_equals_wired_catalog(self):
+        from openpath.contract import PRODUCTION_CONTRACT, CatalogStatus
+        from openpath.catalog import CATALOG
+        certified = {q.id for q in PRODUCTION_CONTRACT
+                     if q.status is CatalogStatus.CERTIFIED}
+        self.assertEqual(certified, {q.id for q in CATALOG},
+                         "only the wired catalog may be marked CERTIFIED")
+
+    def test_every_contracted_question_names_what_it_needs(self):
+        from openpath.contract import PRODUCTION_CONTRACT, CatalogStatus
+        for q in PRODUCTION_CONTRACT:
+            if q.status is CatalogStatus.CONTRACTED:
+                self.assertTrue(q.needs.strip(),
+                                f"{q.id} is CONTRACTED but names no collector/subsystem")
+
+    def test_ids_unique(self):
+        from openpath.contract import PRODUCTION_CONTRACT
+        ids = [q.id for q in PRODUCTION_CONTRACT]
+        self.assertEqual(len(ids), len(set(ids)))
+
+    def test_certified_facets_are_wired(self):
+        """A CERTIFIED question must point at a real, runnable facet; a CONTRACTED
+        one need not (that is exactly what 'not yet built' means)."""
+        from openpath.contract import PRODUCTION_CONTRACT, CatalogStatus
+        from openpath.facets import get_facet
+        for q in PRODUCTION_CONTRACT:
+            if q.status is CatalogStatus.CERTIFIED:
+                get_facet(q.facet)  # raises if not wired
+
+    def test_scoreboard_renders_and_counts_match(self):
+        rc, out = self.cli("--contract")
+        self.assertEqual(rc, 0)
+        self.assertIn("Production question contract", out)
+        self.assertIn("CERTIFIED 15", out)
+        rc, jout = self.cli("--contract", "--format", "json")
+        data = json.loads(jout)
+        self.assertEqual(data["counts"]["certified"], 15)
+        self.assertEqual(data["total"], len(data["questions"]))
+
+
 class TestCatalog(Base):
     """The frozen catalog stays coherent with the code and the docs."""
 

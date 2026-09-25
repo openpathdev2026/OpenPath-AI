@@ -71,7 +71,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--list-families", action="store_true",
                    help="list the facet families and exit")
     p.add_argument("--catalog", action="store_true",
-                   help="print the frozen client question catalog (the contract) "
+                   help="print the frozen, wired client question catalog (the "
+                        "CERTIFIED core) and exit")
+    p.add_argument("--contract", action="store_true",
+                   help="print the full production question contract with each "
+                        "question's certification status (CERTIFIED/CONTRACTED) "
                         "and exit")
     p.add_argument("--all-users", action="store_true",
                    help="run the facet (default: core) for EVERY discovered user "
@@ -113,6 +117,15 @@ def main(argv: Optional[list] = None) -> int:
         from openpath.catalog import CATALOG
         for cq in CATALOG:
             print(f"{cq.id}  [{cq.facet:13s}] {cq.text.replace('{user}', 'USER')}")
+        return 0
+
+    if args.contract:
+        from openpath.contract import PRODUCTION_CONTRACT
+        from openpath.render import render_contract, render_contract_json
+        if args.format == "json":
+            print(render_contract_json(PRODUCTION_CONTRACT))
+        else:
+            print(render_contract(PRODUCTION_CONTRACT))
         return 0
 
     if (not args.coverage and not args.all_users and not args.question

@@ -6,6 +6,28 @@ based on Keep a Changelog; dates are UTC.
 ## [Unreleased]
 
 ### Added
+- **Production question contract (`openpath/contract.py`, `--contract`).** The
+  product's catalog is now the full set of user-facing forensic questions OpenPath
+  commits to (153, an output of an evidence-surface analysis, not a target), each
+  with a per-question certification **status** — CERTIFIED or CONTRACTED — so
+  certification is a property of a question, not a limit on which questions exist.
+  The 15 wired, conformance-proven questions are the CERTIFIED core; the other 138
+  are CONTRACTED (in the contract, but their deterministic evidence path is not yet
+  complete) and each names exactly what unblocks it — a specific new collector, or
+  the query/filter/pivot subsystem the router does not yet have (the single largest
+  unblock, ~77 questions). `openpath-ai --contract` prints the scoreboard (text or
+  JSON); `docs/PRODUCTION-CATALOG.md` has the full per-question detail. A CONTRACTED
+  question is declared, never answered from thin air. `TestProductionContract`
+  asserts CERTIFIED == the wired catalog, every CONTRACTED entry names its need, and
+  the certified facets are actually runnable. Built and classified by two staged
+  multi-agent analyses (generation + adversarial critique); the critique caught a
+  real shipped bug (Q06 below) and corrected an over-optimistic CERTIFIED count.
+- **Q06 over-certification fixed.** RootActivity ("what did {user} do as root")
+  disclosed a gap only when the execve rule was absent, so an execve-only host
+  reported the full extent as root as CERTIFIED while silently dropping root file
+  and network activity. It now discloses missing host-wide-file / connect+bind
+  rules and degrades to PARTIAL; Q06 is CERTIFIED only with command+file+network
+  auditing.
 - **Federated evidence model + answer confidence (resilience).** Every catalog
   question now declares, in `openpath/catalog.py`, which sources are its **primary**
   carriers (certified), which yield only a **partial** answer, and which merely

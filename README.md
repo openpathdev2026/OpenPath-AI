@@ -17,9 +17,18 @@ openpath-ai --catalog     # print the frozen question catalog (the contract)
 ```
 
 **Docs:** [Question catalog](docs/CLIENT-QUESTION-CATALOG.md) ·
+[Production contract](docs/PRODUCTION-CATALOG.md) ·
 [Evidence sources](docs/EVIDENCE-SOURCES.md) ·
 [Architecture](docs/ARCHITECTURE.md) · [Limitations](docs/LIMITATIONS.md) ·
 [Testing](docs/TESTING.md) · [Changelog](CHANGELOG.md)
+
+**Catalog vs. contract.** The **certified catalog** (15 questions, `--catalog`) is
+the wired, conformance-proven core answerable today. The **production contract**
+(`--contract`, [docs/PRODUCTION-CATALOG.md](docs/PRODUCTION-CATALOG.md)) is the full
+set of questions OpenPath commits to (153), each with a per-question status —
+CERTIFIED or CONTRACTED. Certification is a property of a question, not a ceiling on
+which questions exist; a CONTRACTED question names the collector or query subsystem
+it needs and is never answered from thin air.
 
 Activity is narrated in flowing sentences that name the **object each action was
 performed against**, and every claim is tied to the raw record behind it:
@@ -269,6 +278,8 @@ openpath/
   sources/    # collectors: wtmp (binary), auditd, sshd journal, packages
   facets/     # one analyzer per question family + Core/Evidence/Gaps aggregators
   engine.py   # collect once -> resolve identity -> run facet
+  catalog.py  # the frozen CERTIFIED 15 (wired) + per-question EvidenceSpec
+  contract.py # the full production contract (153) with per-question status
   router.py   # natural-language question -> facet + subject + time (convenience)
   render.py   # answer / evidence / gaps, as text or JSON
   cli.py      # openpath-ai entrypoint
@@ -278,6 +289,6 @@ tests/
   live/       # live checks against the real host filesystem
 scripts/      # collect_bundle.sh, live_conformance.sh
 contrib/      # openpath.rules (recommended auditd rules)
-docs/         # CLIENT-QUESTION-CATALOG, EVIDENCE-SOURCES, ARCHITECTURE,
-              # LIMITATIONS, TESTING (+ CHANGELOG at repo root)
+docs/         # CLIENT-QUESTION-CATALOG, PRODUCTION-CATALOG, EVIDENCE-SOURCES,
+              # ARCHITECTURE, LIMITATIONS, TESTING (+ CHANGELOG at repo root)
 ```
