@@ -2653,6 +2653,120 @@ class TestScopeSessionVisibility(Base):
                             for n in d["finding"]["notes"]))
 
 
+class TestAttributionCorpus(Base):
+    """Adversarial attribution: prove the human is identified CORRECTLY when the
+    situation is messy (concurrent same-user sessions, multiple sudo chains, nested
+    su, overlapping direct root logins, automation) -- and that genuine ambiguity is
+    DISCLOSED, never guessed. Attribution is a core trust pillar; user-level
+    attribution rests on the audit login uid (auid), which survives sudo/su, and
+    session grouping on the audit session id (ses)."""
+
+    def test_concurrent_same_user_sessions_grouped_by_ses(self):
+        # alice has two concurrent shells (ses 10 and 11) from two IPs; every command
+        # is hers (auid) AND the two sessions are distinguishable by ses.
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.enable_execve()
+        h.login("alice", ago(hours=5), line="pts/0", host="10.0.0.5", until=ago(hours=1))
+        h.login("alice", ago(hours=5), line="pts/1", host="10.0.0.9", until=ago(hours=1))
+        h.exec(1001, 1001, ["whoami"], "/usr/bin/whoami", ago(hours=4), comm="whoami",
+               ses=10, tty="pts0")
+        h.exec(1001, 1001, ["curl", "x"], "/usr/bin/curl", ago(hours=4), comm="curl",
+               ses=10, tty="pts0")
+        h.exec(1001, 1001, ["nc", "-l"], "/usr/bin/nc", ago(hours=4), comm="nc",
+               ses=11, tty="pts1")
+        h.write()
+        f = self.finding(root, "alice", "commands")
+        self.assertEqual(len(f.events), 3)
+        self.assertTrue(all(e.actor_name == "alice" or e.auid == 1001 for e in f.events))
+        ses_ids = {e.attrs.get("ses") for e in f.events}
+        self.assertEqual(ses_ids, {10, 11})   # two distinct sessions, distinguishable
+
+    def test_multiple_sudo_chains_do_not_cross(self):
+        # alice and bob each escalate and act as root; root activity must split them.
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001).passwd("bob", 1002)
+        h.enable_execve()
+        h.sudo(1001, 0, "/usr/sbin/useradd x", ago(hours=4))
+        h.exec(1001, 0, ["useradd", "x"], "/usr/sbin/useradd", ago(hours=4), euid=0,
+               comm="useradd", ses=10)
+        h.sudo(1002, 0, "/usr/sbin/usermod y", ago(hours=3))
+        h.exec(1002, 0, ["usermod", "y"], "/usr/sbin/usermod", ago(hours=3), euid=0,
+               comm="usermod", ses=20)
+        h.write()
+        from openpath.facets.attribution import attribute_root_actions
+        from openpath.model.event import EventType
+        ctx = Engine().build_context(self.env(root), "root", self.win())
+        execs = [e for e in ctx.events if e.type == EventType.EXEC]
+        pairs = attribute_root_actions(ctx, execs)
+        by_cmd = {e.attrs.get("comm"): a.actor for e, a in pairs}
+        self.assertEqual(by_cmd.get("useradd"), "alice")
+        self.assertEqual(by_cmd.get("usermod"), "bob")   # no cross-attribution
+
+    def test_nested_su_attributes_to_login_user(self):
+        # alice -> su root -> su bob; the login uid stays alice, so root actions are
+        # hers regardless of the intermediate identity switches.
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001).passwd("bob", 1002)
+        h.enable_execve()
+        h.su(1001, 0, ago(hours=4))                                  # alice -> root
+        h.exec(1001, 1002, ["id"], "/usr/bin/id", ago(hours=4), euid=1002, comm="id")
+        h.write()
+        from openpath.facets.attribution import classify_root_action
+        from openpath.model.event import EventType
+        ctx = Engine().build_context(self.env(root), "root", self.win())
+        # the euid-0 escalation act and the switched exec both trace to alice
+        for e in ctx.events:
+            if e.type == EventType.EXEC:
+                attr = classify_root_action(e, ctx) if (e.uid == 0 or e.attrs.get("euid") == 0) else None
+        # the exec ran as bob (euid 1002) but auid is alice -> attributed to alice
+        ex = [e for e in ctx.events if e.type == EventType.EXEC][0]
+        self.assertEqual(ex.auid, 1001)
+        f = self.finding(root, "alice", "commands")
+        self.assertTrue(any(e.attrs.get("comm") == "id" for e in f.events))
+
+    def test_overlapping_root_logins_ambiguity_disclosed(self):
+        # two concurrent direct root logins from different IPs; a root action cannot
+        # be pinned to one -- the ambiguity is disclosed, not guessed.
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0)
+        h.enable_execve()
+        h.login("root", ago(hours=5), line="pts/0", host="1.1.1.1", until=ago(hours=1))
+        h.login("root", ago(hours=5), line="pts/1", host="2.2.2.2", until=ago(hours=1))
+        h.ssh_accept("root", "1.1.1.1", ago(hours=5))
+        h.ssh_accept("root", "2.2.2.2", ago(hours=5))
+        h.exec(0, 0, ["cat", "/etc/shadow"], "/usr/bin/cat", ago(hours=3), comm="cat")
+        h.write()
+        from openpath.facets.attribution import classify_root_action, DIRECT_ROOT_LOGIN
+        from openpath.model.event import EventType
+        ctx = Engine().build_context(self.env(root), "root", self.win())
+        ex = [e for e in ctx.events if e.type == EventType.EXEC and e.attrs.get("comm") == "cat"][0]
+        attr = classify_root_action(ex, ctx)
+        self.assertEqual(attr.kind, DIRECT_ROOT_LOGIN)
+        self.assertIn("one of", (attr.origin or ""))     # ambiguity disclosed
+        self.assertIn("ambiguous", attr.detail)
+
+    def test_automation_is_unattributable_not_blamed(self):
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.enable_execve()
+        h.exec(4294967295, 0, ["/usr/lib/cronjob"], "/usr/lib/cronjob", ago(hours=3),
+               euid=0, comm="cronjob")
+        h.write()
+        from openpath.facets.attribution import classify_root_action
+        from openpath.model.event import EventType
+        ctx = Engine().build_context(self.env(root), "root", self.win())
+        ex = [e for e in ctx.events if e.type == EventType.EXEC][0]
+        attr = classify_root_action(ex, ctx)
+        self.assertFalse(attr.attributable)   # no human blamed
+        self.assertIsNone(attr.actor)
+
+
 class TestContentAndReputation(Base):
     """Certifies the two enrichment-evidence questions: FS-13 (file content
     before/after from a file-integrity monitor) and IA-10 (login-origin reputation

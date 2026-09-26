@@ -493,6 +493,7 @@ class AuditdCollector(Collector):
             "pid": _int(sfields, "pid"),
             "ppid": _int(sfields, "ppid"),
             "tty": sfields.get("tty"),
+            "ses": _int(sfields, "ses"),   # audit login-session id (groups a session)
             "key": key,
         }
         citations = self._citations(g)

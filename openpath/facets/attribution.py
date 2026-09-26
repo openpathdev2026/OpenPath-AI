@@ -120,10 +120,22 @@ def classify_root_action(event: Event, ctx: AnalysisContext,
             )
         ]
         if covering:
-            origin = covering[0].attrs.get("origin") or covering[0].attrs.get("host")
+            origins = sorted({(s.attrs.get("origin") or s.attrs.get("host") or "?")
+                              for s in covering})
+            if len(origins) == 1:
+                return Attribution(
+                    DIRECT_ROOT_LOGIN, "root", origin=origins[0],
+                    detail="logged in directly as root (no base user to attribute to)",
+                )
+            # Overlapping direct root logins: which one did this is NOT determinable
+            # without an audit session id linking the action to a login. Disclose the
+            # candidate set honestly rather than pick one.
             return Attribution(
-                DIRECT_ROOT_LOGIN, "root", origin=origin,
-                detail="logged in directly as root (no base user to attribute to)",
+                DIRECT_ROOT_LOGIN, "root",
+                origin="one of: " + ", ".join(origins),
+                detail=(f"{len(covering)} concurrent direct root logins were open; "
+                        f"the specific session behind this action is ambiguous "
+                        f"(no session id links them)"),
             )
         return Attribution(
             ROOT_NO_SESSION, "root",

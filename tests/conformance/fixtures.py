@@ -175,7 +175,7 @@ class HostBuilder:
 
     def exec(self, auid, uid, argv, exe, at, cwd="/root", euid=None,
              key="exec", comm=None, arch="x86_64", success="yes", exit_code=0,
-             pid=None, ppid=1000):
+             pid=None, ppid=1000, ses=3, tty="pts0"):
         euid = uid if euid is None else euid
         comm = comm or (argv[0] if argv else "prog")
         sid = next(self._serial)
@@ -187,7 +187,7 @@ class HostBuilder:
         self._audit.append(
             f"type=SYSCALL msg=audit({aid}): arch={archhex} syscall={execno} "
             f"success={success} exit={exit_code} ppid={ppid} pid={pid} auid={auid} uid={uid} gid=0 "
-            f"euid={euid} suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=pts0 ses=3 "
+            f"euid={euid} suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty={tty} ses={ses} "
             f'comm="{comm}" exe="{exe}"{keyfield}')
         argfields = " ".join(f'a{i}="{a}"' for i, a in enumerate(argv))
         self._audit.append(
