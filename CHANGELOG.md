@@ -6,6 +6,18 @@ based on Keep a Changelog; dates are UTC.
 ## [Unreleased]
 
 ### Added
+- **Deterministic analytics + correlation questions certified (132 total).** Each
+  a stated-policy or cited-correlation answer computed from the evidence already
+  collected -- no external feed, no ML: IA-09 (off-hours logins, against a stated
+  UTC business-hours policy); NW-03 (beaconing -- >=4 outbound connects to one
+  endpoint at low-jitter regular intervals -- and fan-out to >=20 endpoints);
+  PV-09 (root activity by a non-root user with NO observed sudo/su escalation --
+  a proxy for a setuid binary / exploit / unseen escalation -- classified
+  deterministically and kept certified as an evidence-scoped finding, with the
+  explained-only case stated too); TM-05 (an unattributable daemon action
+  correlated to the persistence artifact -- cron job / unit -- whose command it
+  matches, a likely launcher, never asserted as proof); and NW-11 (network-config
+  changes via the files path query). Proven in `TestAnalyticsAndCorrelation`.
 - **Package-policy collector + facet (`openpath/sources/pkgpolicy.py`,
   `openpath/facets/pkgpolicy.py`).** Answers the software supply-chain cluster from
   on-host configuration: PK-13 configured repositories and any pointing at an

@@ -165,6 +165,21 @@ class RootActivityFacet(Facet):
 
     _TYPES = [EventType.EXEC, EventType.FILE_CHANGE, EventType.NETWORK]
 
+    @staticmethod
+    def _match_scheduler(event, persist):
+        """A persistence artifact whose command/exe matches this action's binary."""
+        exe = (event.attrs.get("exe") or event.attrs.get("cmdline")
+               or event.attrs.get("path") or "")
+        base = exe.rsplit("/", 1)[-1] if exe else ""
+        if not base:
+            return None
+        for p in persist:
+            cmd = (p.attrs.get("command") or p.attrs.get("exec_start")
+                   or p.attrs.get("artifact") or "")
+            if base and (base in cmd or exe and exe in cmd):
+                return p
+        return None
+
     def analyze(self, ctx: AnalysisContext) -> Finding:
         f = self._new_finding(ctx)
         f.gaps.extend(self._prereq_gaps(ctx))
@@ -241,8 +256,42 @@ class RootActivityFacet(Facet):
                 f"{e.ts.isoformat()} [{e.type.value}] {e.summary}  <- {attr.label()}"
             )
 
+        # PV-09: root activity by a non-root subject that is NOT preceded by any
+        # observed sudo/su escalation -- a proxy for a setuid binary, an exploit, or
+        # an escalation path OpenPath cannot see. Deterministic classification kept
+        # as a finding (a note, not a gap) so the answer stays evidence-scoped and
+        # certified: either every root action is explained, or the unexplained ones
+        # are named.
+        if not subject_is_root:
+            escs = ctx.subject_events([EventType.PRIVILEGE_ESCALATION])
+            has_sudo_su = any(e.attrs.get("tool") in ("sudo", "su")
+                              and e.attrs.get("res") in (None, "success") for e in escs)
+            if pairs and not has_sudo_su:
+                f.notes.append(
+                    f"[PV-09] {len(pairs)} root action(s) attributed to "
+                    f"{ctx.subject.username} with NO observed sudo/su escalation in "
+                    f"the window -- possible setuid binary, exploit/LPE, or an "
+                    f"escalation OpenPath does not record (evidence-scoped).")
+            elif pairs:
+                f.notes.append(
+                    f"[PV-09] all of {ctx.subject.username}'s root activity is "
+                    f"explained by an observed sudo/su escalation (no evidence of a "
+                    f"non-sudo/su root gain within the covered scope).")
+
+        # TM-05: try to explain unattributable root activity by a scheduled task --
+        # match a daemon action's binary/command against a persistence artifact's
+        # command (cron job / systemd ExecStart). A likely, cited correlation, never
+        # asserted as proof (the launching job leaves no loginuid).
+        persist = [e for e in ctx.events if e.type is EventType.PERSISTENCE]
         # Disclose root actions that cannot be tied to a human.
         unattributable = [(e, a) for e, a in pairs if not a.attributable]
+        for e, _a in unattributable:
+            hit = self._match_scheduler(e, persist)
+            if hit is not None:
+                f.notes.append(
+                    f"[TM-05] unattributable root action '{e.summary}' matches "
+                    f"persistence artifact '{hit.attrs.get('artifact')}' "
+                    f"({hit.attrs.get('kind')}) -- likely launched by it.")
         if unattributable:
             f.gaps.append(Gap(
                 "Root activity",

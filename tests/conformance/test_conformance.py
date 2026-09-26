@@ -2399,6 +2399,99 @@ class TestPackagePolicy(Base):
                             for e in repos))
 
 
+class TestAnalyticsAndCorrelation(Base):
+    """Certifies the deterministic-analytics and correlation questions: off-hours
+    logins (IA-09), beaconing/fan-out (NW-03), non-sudo/su root gain (PV-09),
+    scheduler attribution of unattributable activity (TM-05), and network-config
+    changes (NW-11) -- each a stated-policy or cited-correlation answer, no external
+    feed, proven through the shipped CLI."""
+
+    def _run(self, root, facet, flags, user=None):
+        argv = ["--data-root", str(root), "--format", "json", "--facet", facet]
+        if user:
+            argv += ["--user", user]
+        rc, out = self.cli(*argv, *flags)
+        self.assertEqual(rc, 0, out)
+        return json.loads(out)
+
+    def test_ia09_off_hours(self):
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        night = ago(hours=9)   # NOW is 12:00 UTC -> 9h earlier is 03:00 UTC (off-hours)
+        self.assertTrue(night.hour < 7 or night.hour >= 19)
+        h.login("alice", night, line="pts/0", host="10.0.0.5", until=ago(hours=8))
+        h.write()
+        d = self._run(root, "login", [], user="alice")
+        self.assertIn("off-hours", d["finding"]["summary"])
+        self.assertTrue(any("off-hours" in n for n in d["finding"]["notes"]))
+
+    def test_nw03_beaconing(self):
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.enable_network()
+        for i in range(5):
+            h.connect(1001, 1001, "203.0.113.55", 443,
+                      NOW - timedelta(minutes=60 - 5 * i), comm="beacon")
+        h.write()
+        d = self._run(root, "network", [], user="alice")
+        self.assertIn("BEACONING", d["finding"]["summary"])
+        self.assertTrue(any("beaconing" in n for n in d["finding"]["notes"]))
+
+    def test_pv09_non_sudo_root_gain(self):
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.enable_execve().enable_network().enable_file_syscalls().watch("/etc", "wa", "etc")
+        h.exec(1001, 0, ["/tmp/rootkit"], "/tmp/rootkit", ago(hours=2),
+               euid=0, comm="rootkit")     # root exec with NO sudo/su
+        h.write()
+        d = self._run(root, "root_activity", [], user="alice")
+        self.assertEqual(d["finding"]["confidence"], "certified")
+        self.assertTrue(any("PV-09" in n and "NO observed sudo/su" in n
+                            for n in d["finding"]["notes"]))
+
+    def test_pv09_all_root_explained_is_negative(self):
+        # the flip side: root gained only via sudo -> explicitly "no non-sudo gain"
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.enable_execve().enable_network().enable_file_syscalls().watch("/etc", "wa", "etc")
+        h.sudo(1001, 0, "/usr/bin/id", ago(hours=2))
+        h.exec(1001, 0, ["id"], "/usr/bin/id", ago(hours=2), euid=0, comm="id")
+        h.write()
+        d = self._run(root, "root_activity", [], user="alice")
+        self.assertTrue(any("PV-09" in n and "explained by an observed sudo/su" in n
+                            for n in d["finding"]["notes"]))
+
+    def test_tm05_scheduler_attribution(self):
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0)
+        h.enable_execve().enable_network().enable_file_syscalls().watch("/etc", "wa", "etc")
+        h.cron_system("0 3 * * *", "root", "/usr/local/bin/backup.sh")
+        h.exec(4294967295, 0, ["/usr/local/bin/backup.sh"], "/usr/local/bin/backup.sh",
+               ago(hours=2), euid=0, comm="backup.sh")
+        h.write()
+        d = self._run(root, "root_activity", [], user="root")
+        self.assertTrue(any("TM-05" in n and "backup.sh" in n
+                            for n in d["finding"]["notes"]))
+
+    def test_nw11_netconfig_change(self):
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.enable_execve().enable_file_syscalls().watch("/etc", "wa", "etc")
+        h.file_change(1001, 0, "creat",
+                      "/etc/NetworkManager/system-connections/wg0.nmconnection",
+                      ago(hours=2), euid=0, key="etc")
+        h.write()
+        d = self._run(root, "files", ["--path", "/etc/NetworkManager/*"], user="alice")
+        self.assertTrue(d["finding"]["events"])
+        self.assertTrue(all(e["records"] for e in d["evidence"]))
+
+
 class TestProductionContract(Base):
     """The full production contract is honest: CERTIFIED == the wired core, and
     every CONTRACTED question names what it needs and is never silently answered."""
@@ -2407,7 +2500,7 @@ class TestProductionContract(Base):
     # questions that have a dedicated proving test in TestQueryLayer. This allowlist
     # is the guard: flipping any other question to CERTIFIED without a proving test
     # fails here (prevents silent over-certification).
-    _QUERY_CERTIFIED = {"AC-01", "AC-02", "AC-03", "AC-04", "AC-05", "AC-06", "AC-07", "AC-08", "AC-09", "AC-10", "AC-11", "AC-12", "AC-13", "EX-01", "EX-02", "EX-03", "EX-04", "EX-05", "EX-06", "EX-07", "EX-08", "EX-09", "EX-10", "FS-01", "FS-02", "FS-03", "FS-04", "FS-05", "FS-06", "FS-07", "FS-08", "FS-09", "FS-10", "FS-11", "IA-01", "IA-02", "IA-03", "IA-04", "IA-05", "IA-06", "IA-07", "IA-08", "IA-12", "NW-01", "NW-02", "NW-05", "NW-07", "NW-13", "PK-01", "PK-02", "PK-03", "PK-04", "PK-05", "PK-06", "PK-07", "PK-08", "PK-09", "PK-10", "PK-11", "PK-12", "PK-13", "PK-14", "PK-15", "PK-16", "PV-01", "PV-02", "PV-03", "PV-04", "PV-05", "PV-06", "PV-07", "PV-08", "PV-10", "PV-11", "SL-01", "SL-02", "SL-03", "SL-04", "SL-05", "SL-06", "SL-07", "SL-08", "SL-09", "SL-10", "SL-11", "SL-12", "SL-13", "SL-14", "SP-01", "SP-02", "SP-03", "SP-04", "SP-05", "SP-06", "SP-07", "SP-08", "SP-09", "SP-10", "SP-11", "SP-12", "SP-13", "SP-14", "SP-15", "SP-16", "TM-01", "TM-04", "TM-07", "TM-08", "TM-09", "TM-10", "TM-11", "TM-12"}
+    _QUERY_CERTIFIED = {"AC-01", "AC-02", "AC-03", "AC-04", "AC-05", "AC-06", "AC-07", "AC-08", "AC-09", "AC-10", "AC-11", "AC-12", "AC-13", "EX-01", "EX-02", "EX-03", "EX-04", "EX-05", "EX-06", "EX-07", "EX-08", "EX-09", "EX-10", "FS-01", "FS-02", "FS-03", "FS-04", "FS-05", "FS-06", "FS-07", "FS-08", "FS-09", "FS-10", "FS-11", "IA-01", "IA-02", "IA-03", "IA-04", "IA-05", "IA-06", "IA-07", "IA-08", "IA-09", "IA-12", "NW-01", "NW-02", "NW-03", "NW-05", "NW-07", "NW-11", "NW-13", "PK-01", "PK-02", "PK-03", "PK-04", "PK-05", "PK-06", "PK-07", "PK-08", "PK-09", "PK-10", "PK-11", "PK-12", "PK-13", "PK-14", "PK-15", "PK-16", "PV-01", "PV-02", "PV-03", "PV-04", "PV-05", "PV-06", "PV-07", "PV-08", "PV-09", "PV-10", "PV-11", "SL-01", "SL-02", "SL-03", "SL-04", "SL-05", "SL-06", "SL-07", "SL-08", "SL-09", "SL-10", "SL-11", "SL-12", "SL-13", "SL-14", "SP-01", "SP-02", "SP-03", "SP-04", "SP-05", "SP-06", "SP-07", "SP-08", "SP-09", "SP-10", "SP-11", "SP-12", "SP-13", "SP-14", "SP-15", "SP-16", "TM-01", "TM-05", "TM-04", "TM-07", "TM-08", "TM-09", "TM-10", "TM-11", "TM-12"}
 
     def test_certified_set_is_exactly_the_proven_set(self):
         from openpath.contract import PRODUCTION_CONTRACT, CatalogStatus

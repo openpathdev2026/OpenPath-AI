@@ -5,7 +5,7 @@ The full set of user-facing forensic questions OpenPath commits to, each with a
 count is an output of the analysis, not a target. Certification is a property of
 a question, not a limit on which questions exist.
 
-**153 questions** — CERTIFIED 127, CONTRACTED 26.
+**153 questions** — CERTIFIED 132, CONTRACTED 21.
 
 - **CERTIFIED** — wired and proven end-to-end today (see `catalog.py` + the
   conformance suite). Complete *within the covered evidence scope*, never absolute.
@@ -80,11 +80,14 @@ a question, not a limit on which questions exist.
 | IA-06 | Who accessed this host during the window (all authenticated principals)? | `login` | wtmp, journal.sshd, auth, btmp |
 | IA-07 | Which remote IPs/hosts connected and authenticated to this host? | `login` | wtmp, journal.sshd, auth, btmp |
 | IA-08 | Were there brute-force or password-spraying attempts against the host or {user}? | `login` | btmp, journal.sshd, auth, wtmp |
+| IA-09 | Did {user} log in at unusual or off-hours times? | `login` | wtmp, journal.sshd, auth |
 | IA-12 | Is SSH root login or password authentication even permitted on this host (auth policy)? | `authorization` | sshd config collector, journal.sshd, auth |
 | NW-01 | What outbound network connections did {user} make, and to which destinations and ports? | `network` | auditd(connect audit rule) |
 | NW-02 | Did {user} connect to a specific known-bad IP, host, or port (IOC match)? | `network` | auditd(connect audit rule), auditd(bind audit rule) |
+| NW-03 | Did {user} exhibit anomalous outbound behavior — beaconing, connection fan-out (scanning), or rare/high ports? | `network` | auditd(connect audit rule) |
 | NW-05 | What ports or sockets did {user} bind or listen on — any new listeners or backdoors? | `network` | auditd(bind audit rule) |
 | NW-07 | What local (UNIX-domain) socket connections did {user} make — e.g. to docker.sock or D-Bus/systemd sockets? | `network` | auditd(connect audit rule) |
+| NW-11 | Did {user} change network interface, routing, VPN, or NetworkManager configuration? | `files` | NetworkManager/VPN collector, auditd(execve audit rule), auditd(host-wide file-change rule) |
 | NW-13 | Can {user} be affirmatively cleared of network activity (an evidenced negative)? | `network` | auditd(connect audit rule), auditd(bind audit rule) |
 | PK-01 | What software changed on this host overall during the window, and when — regardless of who did it? | `packages` | packages |
 | PK-02 | When was a specific package (e.g. nginx) installed, upgraded, or removed on this host? | `packages` | packages |
@@ -110,6 +113,7 @@ a question, not a limit on which questions exist.
 | PV-06 | Did {user} run commands as another (non-root) identity via sudo -u / su, and as whom? | `privilege` | auditd(execve audit rule), auth |
 | PV-07 | Which escalation event led to which subsequent root actions (link a sudo/su to the activity it enabled)? | `root_activity` | auditd(execve audit rule) |
 | PV-08 | When did {user} first and last escalate, and how often (escalation timeline)? | `privilege` | auditd, auth, wtmp |
+| PV-09 | Did {user} gain root by means other than sudo/su — a setuid binary, an exploit, or an LPE? | `root_activity` | auditd(execve audit rule) |
 | PV-10 | What is {user} permitted to do via sudo, and who else is allowed to escalate on this host (sudoers policy)? | `authorization` | sudoers collector, auditd, auth |
 | PV-11 | Did someone grant {user} sudo rights or modify the sudoers policy (privilege persistence)? | `authorization` | sudoers collector, auditd(host-wide file-change rule), auth |
 | SL-01 | When did this host last boot / come up? | `system_lifecycle` | wtmp, auditd |
@@ -144,6 +148,7 @@ a question, not a limit on which questions exist.
 | SP-16 | What persistence-related actions did {user} take immediately before and after the incident? | `persistence` | auditd, auditd(execve audit rule), auditd(host-wide file-change rule), auth, wtmp |
 | TM-01 | Give me a full chronological timeline of everything {user} did in the window, in order. | `timeline` | auditd, wtmp, auth, packages, journal.sshd, btmp |
 | TM-04 | When did {user} first and last appear in the window, and how long were they active (dwell time)? | `timeline` | wtmp, auditd, auth, journal.sshd, packages, btmp |
+| TM-05 | Was unattributable activity caused by a scheduled task or service (cron/systemd timer/unit), and which one? | `root_activity` | cron/timer/unit collector, auditd |
 | TM-07 | Who is the human responsible for a specific action (a command, file change, connection, or account/group change), across sudo/su? | `root_activity` | auditd, auth, wtmp, journal.sshd |
 | TM-08 | What activity on this host cannot be attributed to any human (daemon/service, cron/boot-time, or unset loginuid)? | `core` | auditd, wtmp |
 | TM-09 | What is the exact provenance of one fact — which log, offset, and raw record does it come from? | `evidence` | auditd, wtmp, journal.sshd, auth, packages, btmp |
@@ -153,14 +158,11 @@ a question, not a limit on which questions exist.
 
 ## CONTRACTED (roadmap)
 
-### Needs: query/filter/pivot layer shipped (openpath/query.py); per-question certification test pending  (9)
+### Needs: query/filter/pivot layer shipped (openpath/query.py); per-question certification test pending  (6)
 
 | ID | Question | Facet | Blind spots |
 |----|----------|-------|-------------|
 | FS-12 | What sensitive files did {user} read or access, not modify (reading /etc/shadow, SSH keys, credential stores)? | files | Reads captured ONLY when a read-perm watch (-w -p r) fires, and even then typed FILE_CHANGE op=openat (read vs write not distinguished); ... |
-| IA-09 | Did {user} log in at unusual or off-hours times? | login | Login instants are CERTIFIED but 'unusual/off-hours' requires a behavioral baseline the tool does not hold — the anomaly verdict is analy... |
-| NW-03 | Did {user} exhibit anomalous outbound behavior — beaconing, connection fan-out (scanning), or rare/high ports? | network | Reclassified from the generated CERTIFIED: raw connects are certified but the shipped facet does NOT score beaconing/fan-out/rare-port pa... |
-| PV-09 | Did {user} gain root by means other than sudo/su — a setuid binary, an exploit, or an LPE? | root_activity | An as_root exec (auid≠uid) with NO backing escalation is a citable signal, but OpenPath cannot prove HOW euid reached 0 (setuid bit vs ca... |
 | TM-02 | What did {user} do during a specific login session (the session on tty X that started at T)? | timeline | No pid→sid→session-leader lineage: concurrent same-user sessions cannot be separated; the session→action binding is by timestamp overlap ... |
 | TM-03 | What changed on the host between time T1 and T2 (across all users)? | core | Only subjects discoverable from passwd or the evidence are enumerated; config/state changes with no audited syscall (cron, sudoers, firew... |
 | TM-06 | Which of {user}'s recorded actions are attributable to them with high confidence, and how? | core | auid is the only true auid-centric key (survives sudo/su); auth/wtmp/journal.sshd attribute by name; packages by 30-min correlation — eac... |
@@ -172,12 +174,6 @@ a question, not a limit on which questions exist.
 | ID | Question | Facet | Blind spots |
 |----|----------|-------|-------------|
 | NW-08 | What DNS lookups / name-resolution queries did {user} perform (C2 domains, DNS tunneling)? | NEW:dns | Query names/answers unmodeled; only post-resolution IPs surface, and only if the resolved host was subsequently connected to; a connect t... |
-
-### Needs: NetworkManager/VPN collector (/etc/NetworkManager/system-connections/*, nmcli state, /etc/wireguard/*, ip route, journald NM logs)  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| NW-11 | Did {user} change network interface, routing, VPN, or NetworkManager configuration? | NEW:netconfig | auditd can show nmcli/ip/wg run as commands or a write to a watched config path, but no interface/route/VPN/NM state is modeled. |
 
 ### Needs: No new external source — leaf pid/ppid/tty are already captured — but requires a NEW process-ancestry facet AND a fork/clone (and ideally exit) audit rule + syscall-table entries so fork-only intermediaries do not break lineage.  (1)
 
@@ -202,12 +198,6 @@ a question, not a limit on which questions exist.
 | ID | Question | Facet | Blind spots |
 |----|----------|-------|-------------|
 | NW-06 | What remote hosts established inbound connections to this system (source IPs of incoming flows)? | NEW:conntrack | accept/accept4 peer identity is not reliably decoded and accept is not a gated instrument; SSH inbound origins ARE recoverable via journa... |
-
-### Needs: cron/timer/unit collector (/var/spool/cron/*, /etc/crontab, /etc/cron.*, /etc/at.*, systemctl list-timers/list-unit-files, /etc/systemd/system/*, CRON lines in general journald) correlating schedule/exec against the audited action's time/pid  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| TM-05 | Was unattributable activity caused by a scheduled task or service (cron/systemd timer/unit), and which one? | NEW:scheduled_tasks | auditd today marks such actions ROOT_NO_SESSION/DAEMON (correctly refusing to blame a human) but cannot name the job, schedule, or persis... |
 
 ### Needs: faillock/faillog collector (/var/log/faillog, /var/run/faillock/*, pam_faillock/pam_tally2 threshold/deny-count/unlock-time)  (1)
 

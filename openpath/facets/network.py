@@ -68,12 +68,54 @@ class NetworkFacet(Facet):
             if isinstance(e.attrs.get("addr_info"), dict)
             and e.attrs["addr_info"].get("family") in ("inet", "inet6")
         })
+        # NW-03: beaconing / fan-out. Deterministic signals from the connect set:
+        #  - beaconing: >=4 outbound connects to the SAME endpoint at near-regular
+        #    intervals (low jitter -- max gap within 25% of the mean);
+        #  - fan-out: outbound connects to >=20 distinct endpoints (scan/spray).
+        beacons = self._beaconing(outbound)
+        fanout = len({t for t in targets}) if outbound else 0
+        anomaly = ""
+        for endpoint, n, mean_s in beacons:
+            f.notes.append(f"[beaconing] {n} regular outbound connects to {endpoint} "
+                           f"(~every {int(mean_s)}s) -- possible C2 beacon")
+        if beacons:
+            anomaly += f" BEACONING to {len(beacons)} endpoint(s)."
+        if fanout >= 20:
+            f.notes.append(f"[fan-out] outbound connects to {fanout} distinct "
+                           f"endpoints -- possible scanning/spraying")
+            anomaly += f" FAN-OUT to {fanout} endpoints."
+
         f.summary = (
             f"{ctx.subject.username} performed {len(net)} network operation(s): "
             f"{len(outbound)} outbound, {len(inbound)} bind/listen."
             + (f" Endpoints: {', '.join(targets[:10])}"
                + ("..." if len(targets) > 10 else "") if targets else "")
+            + anomaly
         )
         for e in net:
             f.notes.append(f"{e.ts.isoformat()} {e.summary}")
         return f
+
+    @staticmethod
+    def _beaconing(outbound):
+        """Return [(endpoint, count, mean_interval_s)] for near-regular repeats."""
+        by_ep: dict = {}
+        for e in outbound:
+            ai = e.attrs.get("addr_info")
+            if isinstance(ai, dict) and ai.get("family") in ("inet", "inet6"):
+                ep = f"{ai.get('addr')}:{ai.get('port')}"
+                by_ep.setdefault(ep, []).append(e.ts)
+        out = []
+        for ep, times in by_ep.items():
+            if len(times) < 4:
+                continue
+            times = sorted(times)
+            gaps = [(times[i + 1] - times[i]).total_seconds()
+                    for i in range(len(times) - 1)]
+            mean = sum(gaps) / len(gaps)
+            if mean <= 0:
+                continue
+            # low jitter: every gap within 25% of the mean -> regular cadence
+            if all(abs(g - mean) <= 0.25 * mean for g in gaps):
+                out.append((ep, len(times), mean))
+        return out

@@ -191,6 +191,18 @@ class LoginFacet(Facet):
             for o, c in sorted(brute.items()):
                 f.notes.append(f"[brute-force] {c} failed attempts from {o} "
                                f"(>= {_BRUTE} threshold)")
+        # IA-09: off-hours logins. Deterministic policy stated in the note -- a
+        # successful login whose UTC hour is outside 07:00-18:59 or on a weekend is
+        # flagged (the window is UTC-based and a configurable product policy).
+        off = [e for e in login_events
+               if e.ts.hour < 7 or e.ts.hour >= 19 or e.ts.weekday() >= 5]
+        if off:
+            tail += f"; {len(off)} off-hours login(s)"
+            for e in off:
+                f.notes.append(
+                    f"[off-hours] login at {e.ts.isoformat()} (UTC hour "
+                    f"{e.ts.hour:02d}, {'weekend' if e.ts.weekday() >= 5 else 'weekday'})"
+                    f" -- outside the 07:00-18:59 UTC business-hours policy")
         f.summary = head + tail + "."
 
         for e in sessions:
