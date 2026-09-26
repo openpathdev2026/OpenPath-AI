@@ -1,5 +1,5 @@
 {
-  "generated": "2026-09-26T15:33:44.994188+00:00",
+  "generated": "2026-09-26T15:35:27.940617+00:00",
   "verdict": "NOT READY",
   "gates": [
     {
@@ -125,12 +125,12 @@
         {
           "name": "memory does not grow unbounded (no leak signature)",
           "ok": true,
-          "evidence": "RSS drift 16 KiB, peak 24720 KiB"
+          "evidence": "RSS drift 48 KiB, peak 24572 KiB"
         },
         {
           "name": "bounded latency",
           "ok": true,
-          "evidence": "latency {'min': 0.0192, 'max': 0.0315, 'mean': 0.0236}"
+          "evidence": "latency {'min': 0.0186, 'max': 0.0309, 'mean': 0.0239}"
         }
       ],
       "blockers": [
@@ -155,6 +155,11 @@
           "name": "REPRODUCTION.md protocol present",
           "ok": true,
           "evidence": "docs/REPRODUCTION.md"
+        },
+        {
+          "name": "reproduce.sh green from a fresh clean-clone (no working-tree state)",
+          "ok": true,
+          "evidence": "\n=== RESULT ===\n  9 passed, 0 failed\n  REPRODUCTION: OK"
         }
       ],
       "blockers": [

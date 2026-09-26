@@ -1,6 +1,6 @@
 # E. Independent Reproduction — RED
 
-_Generated 2026-09-26T15:33:44.993962+00:00 by scripts/run_release_gates.py — computed from executed checks._
+_Generated 2026-09-26T15:35:27.940365+00:00 by scripts/run_release_gates.py — computed from executed checks._
 
 ## Executable checks
 
@@ -8,6 +8,7 @@ _Generated 2026-09-26T15:33:44.993962+00:00 by scripts/run_release_gates.py — 
 |-------|--------|----------|
 | reproduce.sh present + executable | PASS | scripts/reproduce.sh |
 | REPRODUCTION.md protocol present | PASS | docs/REPRODUCTION.md |
+| reproduce.sh green from a fresh clean-clone (no working-tree state) | PASS |  === RESULT ===   9 passed, 0 failed   REPRODUCTION: OK |
 
 ## Unmet blockers (keep this gate RED — not fabricated)
 
@@ -17,6 +18,9 @@ _Generated 2026-09-26T15:33:44.993962+00:00 by scripts/run_release_gates.py — 
 
 ## Detail
 
-- clone evidence: not executed (pass --clone-repro to run a fresh-clone reproduction)
+- clone evidence: 
+=== RESULT ===
+  9 passed, 0 failed
+  REPRODUCTION: OK
 
 **Status: RED.** Executable checks above are real evidence; the gate stays RED until the blocker's closing command is run and recorded.
