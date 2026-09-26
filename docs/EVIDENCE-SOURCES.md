@@ -34,6 +34,11 @@ not belong in the product.
 | `packages` (dnf.rpm/dpkg) | Q11 |
 | `persistence` (cron/at, systemd units/timers, linger, legacy startup) | SP-01 SP-06 SP-07 SP-13 SP-14 SP-15 |
 | `authz` (group/sudoers/shadow, ~/.ssh/authorized_keys, sshd_config) | AC-10 AC-11 AC-12 PV-10 PV-11 IA-12 |
+| `journald` (general journal: shutdown/service/crash/clock/boot-target) | SL-04 SL-05 SL-09 SL-11 SL-12 SL-13 SL-14 |
+
+Boot/reboot history (SL-01/02/06/07/08/10) is reconstructed by the
+`system_lifecycle` facet from the `EventType.BOOT` records `wtmp` already emits,
+plus the audited reboot command (who initiated it) — no dedicated collector.
 
 Every collector is used by at least one certified question. There is no source
 in the codebase that no catalog question requires.
@@ -51,6 +56,7 @@ high-tier one carries. When audit and wtmp disagree, audit is authoritative.
 | 2 | System state changes (WHAT changed) | `packages`, `auditd` (ADD/DEL user/group), `auth` | software, accounts, groups |
 | 2 | Persistence state (WHAT is configured to auto-run) | `persistence` (cron/at, systemd units/timers, linger, rc.local), `auditd`/`auth` (establishment acts) | scheduled jobs, enabled units, boot persistence |
 | 2 | Authorization state (WHO holds privilege) | `authz` (group/sudoers/shadow, authorized_keys, sshd_config), `auditd`/`auth` (grant-change acts) | privileged group membership, sudo grants, locked/passwordless accounts, SSH key access, SSH auth policy |
+| 4 | Host lifecycle (WHEN up/down, WHY) | `wtmp` (BOOT), `journald` (shutdown/service/crash/clock), `auditd` (reboot command) | boot/reboot/uptime, clean vs crash, service transitions, kernel, clock changes |
 | 3 | Network (WHERE from / to) | `auditd` (connect/bind + SOCKADDR), `auth`/`journal.sshd` (ssh origin) | egress/ingress, remote origin |
 | 4 | Session corroboration (SUPPORTING) | `wtmp`, `btmp` | confirms a login happened / from where; session-duration intervals; failed logins |
 

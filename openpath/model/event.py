@@ -56,6 +56,11 @@ class EventType(enum.Enum):
     # policy (e.g. sshd PermitRootLogin) is unattributed.
     AUTHZ = "authz"
 
+    # System lifecycle (host-level, not per-user): shutdown/poweroff, service
+    # unit start/stop/failure, kernel panic/OOM/watchdog, boot target, clock change.
+    # Boots come from wtmp as BOOT; these complement them for the lifecycle picture.
+    SYSTEM = "system"
+
     # Network
     NETWORK = "network"          # connect/bind/listen
 
@@ -150,6 +155,9 @@ class Event:
             return ("persistence", a.get("artifact") or a.get("path") or self.summary)
         if t is EventType.AUTHZ:
             return ("authz", a.get("artifact") or a.get("subject") or self.summary)
+        if t is EventType.SYSTEM:
+            return ("system", a.get("artifact") or a.get("unit") or a.get("kind")
+                    or self.summary)
         if t is EventType.PRIVILEGE_ESCALATION:
             if a.get("cmd"):
                 return ("command", a.get("cmd"))

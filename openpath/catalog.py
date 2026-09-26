@@ -161,6 +161,23 @@ _BY_FACET.setdefault(
         _AUTHZ_SPEC),
 )
 
+# The system-lifecycle facet is HOST-level (boots/reboots/uptime/kernel), so it is
+# intentionally NOT in _DATA_FACETS / the per-user Core federation -- a user's
+# overview must not claim the host's reboots. It reads the BOOT records wtmp
+# already emits (+ SYSTEM lifecycle events). wtmp alone makes it answerable.
+_LIFECYCLE_SPEC = _S(certified=[["wtmp(wtmp accounting present)"]],
+                     supporting=["auditd", "journald"],
+                     fatal=["wtmp"])
+_BY_FACET.setdefault(
+    "system_lifecycle",
+    CatalogQuestion(
+        "SL-01",
+        "When did this host last boot, how many times did it reboot, and how long "
+        "has it been up?",
+        "system_lifecycle", ("wtmp", "auditd"), True,
+        _LIFECYCLE_SPEC),
+)
+
 
 def by_id(qid: str) -> CatalogQuestion:
     for q in CATALOG:

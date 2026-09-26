@@ -5,7 +5,7 @@ The full set of user-facing forensic questions OpenPath commits to, each with a
 count is an output of the analysis, not a target. Certification is a property of
 a question, not a limit on which questions exist.
 
-**153 questions** — CERTIFIED 84, CONTRACTED 69.
+**153 questions** — CERTIFIED 97, CONTRACTED 56.
 
 - **CERTIFIED** — wired and proven end-to-end today (see `catalog.py` + the
   conformance suite). Complete *within the covered evidence scope*, never absolute.
@@ -86,6 +86,19 @@ a question, not a limit on which questions exist.
 | PV-08 | When did {user} first and last escalate, and how often (escalation timeline)? | `privilege` | auditd, auth, wtmp |
 | PV-10 | What is {user} permitted to do via sudo, and who else is allowed to escalate on this host (sudoers policy)? | `authorization` | sudoers collector, auditd, auth |
 | PV-11 | Did someone grant {user} sudo rights or modify the sudoers policy (privilege persistence)? | `authorization` | sudoers collector, auditd(host-wide file-change rule), auth |
+| SL-01 | When did this host last boot / come up? | `system_lifecycle` | wtmp, auditd |
+| SL-02 | How many times did the host reboot during the window, and how frequently? | `system_lifecycle` | wtmp |
+| SL-04 | When did the host shut down or power off, and was it a clean shutdown or a crash? | `system_lifecycle` | general (non-sshd) journald collector, wtmp |
+| SL-05 | Was there an unexpected or unplanned reboot / crash during the window? | `system_lifecycle` | general (non-sshd) journald / kmsg collector, wtmp, auditd, auth |
+| SL-06 | What were the host's uptime windows — how long was it up between reboots, and current uptime? | `system_lifecycle` | wtmp |
+| SL-07 | Was the host offline or down during any part of the window (a blind interval where nothing could be recorded)? | `system_lifecycle` | wtmp |
+| SL-08 | Who initiated the reboot or shutdown? | `system_lifecycle` | auditd(execve audit rule), auth, wtmp |
+| SL-09 | Why did the system reboot — kernel panic, OOM, watchdog, power loss, a kernel/package update, or an admin action? | `system_lifecycle` | general (non-sshd) journald / kmsg collector, packages, auditd, auth |
+| SL-10 | What kernel was the host running, and did the kernel change (installed and/or booted) during the window? | `system_lifecycle` | wtmp, packages |
+| SL-11 | What systemd services / units started or stopped during the window? | `system_lifecycle` | general (non-sshd) journald collector |
+| SL-12 | Did any service crash, fail, or restart repeatedly (flapping) during the window? | `system_lifecycle` | general (non-sshd) journald collector |
+| SL-13 | Did the host boot into an unusual target/mode (rescue, emergency, single-user), or did the default boot target change? | `system_lifecycle` | general (non-sshd) journald collector, systemd-unit collector, auditd(host-wide file-change rule) |
+| SL-14 | Was the system clock or time zone changed during the window (timestamp tampering)? | `system_lifecycle` | wtmp, auditd, auditd(execve audit rule), auth |
 | SP-01 | What cron and at scheduled jobs are currently configured on this host, and which are attributable to {user}? | `persistence` | cron/at collector, auditd(execve audit rule), auditd, auth |
 | SP-02 | Did {user} modify any cron configuration files (user crontab, /etc/crontab, /etc/cron.d, /etc/cron.* run-parts)? | `files` | auditd(host-wide file-change rule), auditd(file watch/modify audit rule), wtmp |
 | SP-03 | Did {user} run crontab or at commands to schedule tasks (crontab -e, crontab -, at, batch)? | `commands` | auditd(execve audit rule), auth, wtmp |
@@ -148,30 +161,6 @@ a question, not a limit on which questions exist.
 |----|----------|-------|-------------|
 | NW-08 | What DNS lookups / name-resolution queries did {user} perform (C2 domains, DNS tunneling)? | NEW:dns | Query names/answers unmodeled; only post-resolution IPs surface, and only if the resolved host was subsequently connected to; a connect t... |
 
-### Needs: NO new collector for basic windows — needs a system_lifecycle facet pairing consecutive wtmp BOOT events. A general-journald _BOOT_ID collector would give authoritative boot-session grouping.  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| SL-06 | What were the host's uptime windows — how long was it up between reboots, and current uptime? | NEW:system_lifecycle | Downtime between a shutdown and the next boot is not measurable (no shutdown carrier); boots lost to rotation break interval math; no _BO... |
-
-### Needs: NO new collector for the boot half — wtmp already captures the kernel release in BOOT.attrs['kernel'] (captured-but-unused); needs a facet to surface it. Running/authoritative kernel needs general journald. The install half is answerable via the packages facet.  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| SL-10 | What kernel was the host running, and did the kernel change (installed and/or booted) during the window? | NEW:system_lifecycle | Kernel release recorded in BOOT.attrs['kernel'] never reported; no correlation between a kernel package install and the subsequent boot; ... |
-
-### Needs: NO new collector — needs a system_lifecycle facet to enumerate/count the wtmp BOOT events (today the engine keeps only boots[0] as first_boot).  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| SL-02 | How many times did the host reboot during the window, and how frequently? | NEW:system_lifecycle | No facet counts BOOT events; rotation/truncation undercounts silently; reboots before wtmp's retained horizon are invisible. |
-
-### Needs: NO new collector — wtmp already emits EventType.BOOT with a citation and the engine computes first_boot. Needs only a NEW host-level system_lifecycle FACET (and a non-subject axis) to surface it. General journald _BOOT_ID would add corroboration.  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| SL-01 | When did this host last boot / come up? | NEW:system_lifecycle | BOOT events are collected but surfaced by no facet and excluded from _TIMELINE_TYPES; kernel version in BOOT.attrs['kernel'] never report... |
-
 ### Needs: NetworkManager/VPN collector (/etc/NetworkManager/system-connections/*, nmcli state, /etc/wireguard/*, ip route, journald NM logs)  (1)
 
 | ID | Question | Facet | Blind spots |
@@ -189,12 +178,6 @@ a question, not a limit on which questions exist.
 | ID | Question | Facet | Blind spots |
 |----|----------|-------|-------------|
 | PK-14 | Does OpenPath capture software changes made through yum, zypper, pacman, snap, or flatpak — or only dnf(rpm) and dpkg? | NEW:package_coverage | zypper/pacman/yum are in the exec-correlation NAME set but their TRANSACTION logs are unread, so an audited 'pacman -S' has no transactio... |
-
-### Needs: Two mostly group-b fixes: surface wtmp NEW_TIME/OLD_TIME (parsed into _Record today but dropped by both _build_sessions and _build_boots) via a facet, AND map auditd clock syscalls (settimeofday/clock_settime/adjtimex) + TIME_* records in the existing auditd collector.  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| SL-14 | Was the system clock or time zone changed during the window (timestamp tampering)? | NEW:system_lifecycle | Dedicated clock-change evidence is captured-but-unused or unmapped; the only path today is a weak command proxy (audited date/timedatectl... |
 
 ### Needs: auditd socket() syscall collection (record the socket type/protocol at creation) — within auditd's reach but not currently parsed or gated  (1)
 
@@ -298,42 +281,6 @@ a question, not a limit on which questions exist.
 |----|----------|-------|-------------|
 | IA-11 | Did authentication occur to a non-SSH service (VPN, display manager, cockpit, or other PAM service)? | NEW:general_journald | Only the sshd slice + wtmp/btmp/auth modeled; VPN/WireGuard/cockpit/GDM auth invisible except a resulting wtmp session with no service/me... |
 
-### Needs: general journald / kmsg collector (kernel panic, OOM-killer, watchdog, and presence/absence of a clean-shutdown marker)  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| SL-05 | Was there an unexpected or unplanned reboot / crash during the window? | NEW:system_lifecycle | A reboot/shutdown command via commands facet is a weak planned-vs-unplanned proxy; no panic/clean-shutdown evidence collected; init/sched... |
-
-### Needs: general journald / kmsg collector for panic/OOM/watchdog/clean-shutdown evidence  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| SL-09 | Why did the system reboot — kernel panic, OOM, watchdog, power loss, a kernel/package update, or an admin action? | NEW:system_lifecycle | Only weak proxies today: a kernel package upgrade near the boot (packages) or an audited reboot command (commands); neither is correlated... |
-
-### Needs: general journald collector (reached target rescue/emergency, kernel cmdline) and/or a systemd-state collector (default.target)  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| SL-13 | Did the host boot into an unusual target/mode (rescue, emergency, single-user), or did the default boot target change? | NEW:system_lifecycle | A files-facet proxy can show the default.target symlink changed if watched, but not which target the host actually booted into; a one-off... |
-
-### Needs: general journald collector (systemd 'Reached target Shutdown', systemd-shutdown, 'Powering off') OR an auditd SYSTEM_SHUTDOWN emitter OR wtmp RUN_LVL handling (currently parsed but never emitted)  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| SL-04 | When did the host shut down or power off, and was it a clean shutdown or a crash? | NEW:system_lifecycle | wtmp records only BOOT_TIME (the next boot), not shutdowns; no clean-vs-crash marker; the only signal is the next reboot (itself unsurfac... |
-
-### Needs: general journald collector (unit 'Failed with result', Result=exit-code, start-limit/flapping messages) — standing unmodeled gap  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| SL-12 | Did any service crash, fail, or restart repeatedly (flapping) during the window? | NEW:system_lifecycle | No modeled source carries service failure/restart signals; even sshd failures beyond auth (crash/restart) are not emitted — journal.sshd ... |
-
-### Needs: general journald collector (unit start/stop/activation messages) or a systemd-state collector — a standing unmodeled gap (only the sshd slice is read)  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| SL-11 | What systemd services / units started or stopped during the window? | NEW:system_lifecycle | A systemctl start/stop command is visible via the commands facet, but that is the invocation, not the unit's state transition, and misses... |
-
 ### Needs: geo/threat-intel enrichment + historical login baseline store (and cloud/web/proxy ingestion for access that never hits a local login carrier)  (1)
 
 | ID | Question | Facet | Blind spots |
@@ -375,18 +322,6 @@ a question, not a limit on which questions exist.
 | ID | Question | Facet | Blind spots |
 |----|----------|-------|-------------|
 | PK-16 | Were any unsigned or untrusted-key packages installed (GPG signature verification)? | NEW:package_integrity | A package installed with --nogpgcheck / from an untrusted key looks identical to a signed one in the transaction log — sideloading/tamper... |
-
-### Needs: system_lifecycle facet correlating an audited reboot command with the subsequent BOOT; general journald for non-command reboots (power/watchdog/init/scheduler)  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| SL-08 | Who initiated the reboot or shutdown? | commands | Proves a reboot command was RUN, not that it caused the observed boot; a direct/scheduled reboot or a hardware/power event is unattributa... |
-
-### Needs: system_lifecycle facet to surface down intervals (the pre-first-boot span is handled internally today via effective_start but never reported); between-reboot downtime additionally needs a shutdown carrier (general journald)  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| SL-07 | Was the host offline or down during any part of the window (a blind interval where nothing could be recorded)? | NEW:system_lifecycle | Only the pre-first-boot interval is accounted (and only internally, to adjust gap math); between-reboot downtime is invisible; the adjust... |
 
 ### Needs: web/proxy/cloud audit-log collector (nginx/apache access logs, forward-proxy logs, cloud provider audit trail)  (1)
 

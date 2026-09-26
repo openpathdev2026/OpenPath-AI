@@ -78,6 +78,7 @@ class HostBuilder:
         self._dnf: List[str] = []
         self._dpkg: List[str] = []
         self._journal: List[dict] = []
+        self._journal_gen: List[dict] = []
         self._passwd: List[tuple] = []
         self._group: List[tuple] = []
         self._rules: List[str] = []
@@ -426,6 +427,44 @@ class HostBuilder:
         self._persist["etc/rc.local"] = ["#!/bin/sh"] + list(lines) + ["exit 0"]
         return self
 
+    # -- general journal (system lifecycle) ---------------------------------- #
+    def journal_msg(self, msg, at, unit="", ident="systemd"):
+        usec = int(at.astimezone(timezone.utc).timestamp() * 1_000_000)
+        entry = {"__REALTIME_TIMESTAMP": str(usec), "MESSAGE": msg,
+                 "SYSLOG_IDENTIFIER": ident}
+        if unit:
+            entry["_SYSTEMD_UNIT"] = unit
+        self._journal_gen.append(entry)
+        return self
+
+    def svc_start(self, unit, at, desc=None):
+        return self.journal_msg(f"Started {desc or unit}.", at, unit=unit)
+
+    def svc_stop(self, unit, at, desc=None):
+        return self.journal_msg(f"Stopped {desc or unit}.", at, unit=unit)
+
+    def svc_fail(self, unit, at, desc=None):
+        return self.journal_msg(f"{desc or unit}: Failed with result 'exit-code'.",
+                                at, unit=unit)
+
+    def shutdown(self, at, clean=True):
+        return self.journal_msg("Reached target Shutdown.", at,
+                                ident="systemd") if clean else self
+
+    def kernel_panic(self, at, detail="Fatal exception"):
+        return self.journal_msg(f"Kernel panic - not syncing: {detail}", at,
+                                ident="kernel")
+
+    def oom_kill(self, at, proc="python"):
+        return self.journal_msg(f"Out of memory: Killed process 4242 ({proc})", at,
+                                ident="kernel")
+
+    def clock_change(self, at):
+        return self.journal_msg("Time has been changed", at, ident="systemd")
+
+    def boot_target(self, at, mode="Rescue Mode"):
+        return self.journal_msg(f"Reached target {mode}.", at, ident="systemd")
+
     # -- authorization state (sudoers / shadow / ssh keys / ssh policy) ------ #
     # (reuses the generic state-file accumulator flushed in write())
     def sudoers(self, line):
@@ -497,6 +536,10 @@ class HostBuilder:
         if self._journal:
             (self.root / "var/log/openpath/journal-sshd.jsonl").write_text(
                 "\n".join(json.dumps(e) for e in self._journal) + "\n")
+        if self._journal_gen:
+            (self.root / "var/log/openpath").mkdir(parents=True, exist_ok=True)
+            (self.root / "var/log/openpath/journal.jsonl").write_text(
+                "\n".join(json.dumps(e) for e in self._journal_gen) + "\n")
         if self._passwd:
             (self.root / "etc").mkdir(parents=True, exist_ok=True)
             (self.root / "etc/passwd").write_text(

@@ -6,6 +6,25 @@ based on Keep a Changelog; dates are UTC.
 ## [Unreleased]
 
 ### Added
+- **System-lifecycle facet + general journald collector (`openpath/facets/
+  lifecycle.py`, `openpath/sources/journald.py`).** Answers the host-lifecycle
+  cluster: when the host booted/rebooted, how long it has been up, what kernel ran,
+  who initiated a reboot, and whether shutdowns were clean or crashes. The facet is
+  HOST-level and deliberately NOT folded into the per-user Core overview (a user's
+  report must not claim the host's reboots). It reconstructs boot/reboot/uptime
+  from the `EventType.BOOT` records `wtmp` already emitted (previously the engine
+  kept only the first boot) and ties a reboot to its initiator via the audited
+  `systemctl reboot`/`shutdown` command; between-reboot downtime is disclosed as
+  unmeasured (an upper bound) unless a shutdown carrier is present, never asserted
+  as exact. The general journald collector reads the full `journalctl -o json`
+  export (beyond the sshd slice) and emits `EventType.SYSTEM` for clean shutdown /
+  power-off, systemd unit start/stop/failure, kernel panic / OOM / watchdog, an
+  unusual boot target (rescue/emergency), and system-clock changes -- each cited,
+  conservation counted. Thirteen questions move CONTRACTED -> CERTIFIED (97 total):
+  SL-01/02/06/07/08/10 (wtmp boot history + initiator) and SL-04/05/09/11/12/13/14
+  (journald lifecycle), proven end-to-end in `TestSystemLifecycle` (+ evidenced
+  negative when the host was up throughout, downtime-unmeasured disclosure, and
+  conservation of a malformed journal line).
 - **Authorization-state collector + facet (`openpath/sources/authz.py`,
   `openpath/facets/authorization.py`).** The second current-STATE source: it
   answers "who holds elevated privilege, and did the user grant or change any of

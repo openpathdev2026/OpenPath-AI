@@ -16,6 +16,7 @@ from openpath.facets.accounts import AccountsFacet, GroupsFacet
 from openpath.facets.authorization import AuthorizationFacet
 from openpath.facets.base import AnalysisContext, Facet
 from openpath.facets.files import FilesFacet
+from openpath.facets.lifecycle import SystemLifecycleFacet
 from openpath.facets.meta import CoreFacet, EvidenceFacet, GapsFacet
 from openpath.facets.network import NetworkFacet
 from openpath.facets.packages import PackagesFacet
@@ -53,8 +54,9 @@ FAMILIES: List[FamilySpec] = [
     FamilySpec(12, "network", "Network", NetworkFacet),
     FamilySpec(13, "persistence", "Persistence", PersistenceFacet),
     FamilySpec(14, "authorization", "Authorization", AuthorizationFacet),
-    FamilySpec(15, "evidence", "Evidence", EvidenceFacet),
-    FamilySpec(16, "gaps", "Gaps", GapsFacet),
+    FamilySpec(15, "system_lifecycle", "System lifecycle", SystemLifecycleFacet),
+    FamilySpec(16, "evidence", "Evidence", EvidenceFacet),
+    FamilySpec(17, "gaps", "Gaps", GapsFacet),
 ]
 
 _BY_NAME: Dict[str, FamilySpec] = {spec.name: spec for spec in FAMILIES}

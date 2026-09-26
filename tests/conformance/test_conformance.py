@@ -896,7 +896,7 @@ class TestReadiness(Base):
         report = self._rd(self.fully_instrumented())
         # all substantive data questions answerable (aggregates not counted)
         self.assertEqual(report.answerable, report.data_total)
-        self.assertEqual(report.data_total, 12)
+        self.assertEqual(report.data_total, 13)
 
     def test_debian_host_blind_on_files_and_network_only(self):
         root = self.make_root()
@@ -1975,6 +1975,111 @@ class TestAuthorization(Base):
         self.assertEqual(cov["authz"]["unparseable"], 1)
 
 
+class TestSystemLifecycle(Base):
+    """Certifies the host-lifecycle questions (SL-01/02/04/05/06/07/08/09/10/11/12/
+    13/14) end-to-end through the shipped CLI: boot/reboot history from wtmp, the
+    reboot initiator from an audited command, and shutdown/crash/service/clock/
+    boot-target lifecycle from the general journal -- each cited, none invented."""
+
+    def _host(self):
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.enable_execve()
+        h.boot(ago(hours=20), kernel="6.5.0-1")      # first boot (after window start)
+        h.boot(ago(hours=8), kernel="6.8.0-2")       # a reboot, different kernel
+        h.exec(1001, 0, ["systemctl", "reboot"], "/usr/bin/systemctl",
+               ago(hours=8, minutes=1), euid=0, comm="systemctl")   # SL-08 initiator
+        h.shutdown(ago(hours=8, minutes=2))          # SL-04 clean shutdown
+        h.boot_target(ago(hours=7, minutes=59), "Rescue Mode")      # SL-13
+        h.svc_start("nginx.service", ago(hours=7))   # SL-11
+        h.svc_stop("nginx.service", ago(hours=6))    # SL-11
+        h.svc_fail("worker.service", ago(hours=5))   # SL-12
+        h.oom_kill(ago(hours=4), "python")           # SL-05 / SL-09
+        h.clock_change(ago(hours=3))                 # SL-14
+        h.write()
+        return root
+
+    def _run(self, root):
+        rc, out = self.cli("--data-root", str(root), "--format", "json",
+                           "--facet", "system_lifecycle", "--user", "root")
+        self.assertEqual(rc, 0, out)
+        return json.loads(out)
+
+    def _kinds(self, d, kind):
+        return [e for e in d["finding"]["events"]
+                if (e.get("attrs") or {}).get("kind") == kind]
+
+    def test_lifecycle_cluster_certified(self):
+        d = self._run(self._host())
+        f = d["finding"]
+        # provenance: every lifecycle event carries a citation
+        self.assertTrue(all(e["records"] for e in d["evidence"]),
+                        "a lifecycle event without a raw record")
+        self.assertEqual(f["confidence"], "certified")
+        summ = f["summary"]
+        boots = [e for e in f["events"] if e["type"] == "boot"]
+        # SL-01 last boot + SL-02 reboot count
+        self.assertGreaterEqual(len(boots), 2)
+        self.assertIn("booted 2 time(s)", summ)
+        self.assertIn("last ", summ)
+        # SL-06 uptime + SL-07 blind/offline interval
+        self.assertIn("current uptime", summ)
+        notes = " ".join(f.get("notes", []))
+        self.assertIn("[uptime]", notes)
+        self.assertIn("[blind]", notes)         # pre-first-boot down interval
+        # SL-08 who initiated the reboot
+        self.assertIn("[initiated]", notes)
+        # SL-10 kernel + change across boots
+        self.assertIn("CHANGED across boots", summ)
+        # SL-04 shutdown, SL-05/09 crash, SL-11 svc start/stop, SL-12 fail,
+        # SL-13 boot target, SL-14 clock change
+        self.assertTrue(self._kinds(d, "shutdown"))
+        self.assertTrue(self._kinds(d, "oom"))
+        self.assertTrue(self._kinds(d, "service_start"))
+        self.assertTrue(self._kinds(d, "service_stop"))
+        self.assertTrue(self._kinds(d, "service_failed"))
+        self.assertTrue(self._kinds(d, "boot_target"))
+        self.assertTrue(self._kinds(d, "clock_change"))
+
+    def test_no_boot_in_window_is_evidenced_negative(self):
+        # wtmp present, but the host booted before the window: an honest "up
+        # throughout", scoped, not a false "never booted".
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0)
+        h.login("root", ago(hours=2), until=ago(hours=1))  # activity, but no boot
+        h.write()
+        d = self._run(root)
+        self.assertEqual(d["finding"]["events"], [])
+        self.assertIn("up throughout", d["finding"]["summary"])
+
+    def test_downtime_unmeasured_without_shutdown_carrier_is_disclosed(self):
+        # Two boots, no journald shutdown carrier: boot-to-boot span is disclosed as
+        # an upper bound, not asserted as exact uptime.
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0)
+        h.boot(ago(hours=20)).boot(ago(hours=8))
+        h.write()
+        d = self._run(root)
+        self.assertTrue(any(g["question"] == "System lifecycle"
+                            for g in d["finding"]["gaps"]))
+
+    def test_conservation_counts_bad_journal_line(self):
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0)
+        h.svc_start("nginx.service", ago(hours=2))
+        h.write()
+        # inject a non-JSON line into the general journal export
+        p = root / "var/log/openpath/journal.jsonl"
+        p.write_text(p.read_text() + "this-is-not-json\n")
+        rc, out = self.cli("--coverage", "--format", "json", "--data-root", str(root))
+        cov = {s["source_id"]: s for s in json.loads(out)["coverage"]["sources"]}
+        self.assertEqual(cov["journald"]["unparseable"], 1)
+
+
 class TestProductionContract(Base):
     """The full production contract is honest: CERTIFIED == the wired core, and
     every CONTRACTED question names what it needs and is never silently answered."""
@@ -1983,7 +2088,7 @@ class TestProductionContract(Base):
     # questions that have a dedicated proving test in TestQueryLayer. This allowlist
     # is the guard: flipping any other question to CERTIFIED without a proving test
     # fails here (prevents silent over-certification).
-    _QUERY_CERTIFIED = {"AC-01", "AC-02", "AC-03", "AC-04", "AC-05", "AC-06", "AC-07", "AC-10", "AC-11", "AC-12", "AC-13", "EX-01", "EX-02", "EX-06", "EX-07", "EX-08", "EX-09", "EX-10", "FS-01", "FS-02", "FS-03", "FS-05", "FS-06", "FS-07", "FS-08", "FS-09", "FS-10", "IA-02", "IA-06", "IA-12", "NW-01", "NW-02", "NW-05", "NW-13", "PK-01", "PK-02", "PK-03", "PK-04", "PK-06", "PK-07", "PK-08", "PK-12", "PV-03", "PV-04", "PV-05", "PV-08", "PV-10", "PV-11", "SP-01", "SP-02", "SP-03", "SP-04", "SP-05", "SP-06", "SP-07", "SP-09", "SP-10", "SP-11", "SP-12", "SP-13", "SP-14", "SP-15", "TM-01", "TM-04", "TM-08", "TM-09", "TM-10", "TM-11", "TM-12"}
+    _QUERY_CERTIFIED = {"AC-01", "AC-02", "AC-03", "AC-04", "AC-05", "AC-06", "AC-07", "AC-10", "AC-11", "AC-12", "AC-13", "EX-01", "EX-02", "EX-06", "EX-07", "EX-08", "EX-09", "EX-10", "FS-01", "FS-02", "FS-03", "FS-05", "FS-06", "FS-07", "FS-08", "FS-09", "FS-10", "IA-02", "IA-06", "IA-12", "NW-01", "NW-02", "NW-05", "NW-13", "PK-01", "PK-02", "PK-03", "PK-04", "PK-06", "PK-07", "PK-08", "PK-12", "PV-03", "PV-04", "PV-05", "PV-08", "PV-10", "PV-11", "SL-01", "SL-02", "SL-04", "SL-05", "SL-06", "SL-07", "SL-08", "SL-09", "SL-10", "SL-11", "SL-12", "SL-13", "SL-14", "SP-01", "SP-02", "SP-03", "SP-04", "SP-05", "SP-06", "SP-07", "SP-09", "SP-10", "SP-11", "SP-12", "SP-13", "SP-14", "SP-15", "TM-01", "TM-04", "TM-08", "TM-09", "TM-10", "TM-11", "TM-12"}
 
     def test_certified_set_is_exactly_the_proven_set(self):
         from openpath.contract import PRODUCTION_CONTRACT, CatalogStatus

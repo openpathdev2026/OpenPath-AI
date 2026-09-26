@@ -60,7 +60,7 @@ each subject against the shared event set.
 | `model/coverage.py` | `SourceCoverage`, `Gap`, `CoverageLedger`; horizon + retention + conservation logic; `ledger_source_met`. |
 | `model/evidence_matrix.py` | `EvidenceSpec` (per-question source tiers), `Confidence`, `assess` (finding-aware CERTIFIED/PARTIAL/UNANSWERABLE), `derive_aggregate` (best-of). |
 | `model/finding.py` | `Finding`: a facet's answer (summary + events + gaps + confidence). |
-| `sources/` | Collectors: `wtmp` (binary), `btmp` (failed logins, shares the utmp parser), `auditd` (streaming), `auth` (syslog auth.log/secure), `journal_sshd`, `packages` (dnf/dpkg), `persistence` (cron/at, systemd units/timers, linger, legacy startup — current-state inventory), `authz` (group/sudoers/shadow, authorized_keys, sshd_config — authorization state). |
+| `sources/` | Collectors: `wtmp` (binary), `btmp` (failed logins, shares the utmp parser), `auditd` (streaming), `auth` (syslog auth.log/secure), `journal_sshd`, `packages` (dnf/dpkg), `persistence` (cron/at, systemd units/timers, linger, legacy startup — current-state inventory), `authz` (group/sudoers/shadow, authorized_keys, sshd_config — authorization state), `journald` (general journal: shutdown/service/crash/clock lifecycle). |
 | `facets/` | One analyzer per question family + `attribution` + Core/Evidence/Gaps aggregators. |
 | `engine.py` | Collect → resolve identity → run facet; single- and multi-user. |
 | `router.py` | Natural-language question → facet + subject + time (convenience). |
