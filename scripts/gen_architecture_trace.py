@@ -47,27 +47,54 @@ def eventtype_to_collectors():
     return inv
 
 
+import importlib as _importlib
+import inspect as _inspect
 import re as _re
 
+# Path-like string literals a collector reads when it has no module-level *PATHS
+# constant (state collectors build paths inline / by glob). Scanned from the
+# module source so the trace stays code-derived rather than a curated list.
+_PATH_LITERAL = _re.compile(r'"((?:etc|var|home|root|proc|usr)/[A-Za-z0-9_./*-]+)"')
 
-def _primary_path(paths: list) -> str:
-    """The current (non-rotated) file among a collector's paths, for display.
 
-    Path constants list rotated files (`.1`/`.2`/`.4`) alongside the live file; the
-    live one is the representative source, so prefer a path whose basename has no
-    trailing numeric rotation suffix.
+def _non_rotated(paths: list) -> list:
+    """All current (non-rotated) files among a collector's paths, de-duped.
+
+    Path constants list rotated files (`.1`/`.2`/`.4`) alongside each live file; the
+    live files are the representative sources. A collector can read more than one
+    distinct family (e.g. packages reads both dnf.rpm.log AND dpkg.log), so return
+    every non-rotated path, not just the first.
     """
-    if not paths:
-        return "(dynamic)"
+    out = []
     for p in paths:
-        if not _re.search(r"\.\d+$", p):
-            return p
-    return paths[-1]
+        if not _re.search(r"\.\d+$", p) and p not in out:
+            out.append(p)
+    return out
 
 
-def collector_first_paths():
-    return {c.source_id: _primary_path(collector_paths(c))
-            for c in default_collectors()}
+def _scan_source_paths(collector) -> list:
+    """Path literals read by a collector that exposes no *PATHS list constant."""
+    mod = _importlib.import_module(type(collector).__module__)
+    try:
+        src = _inspect.getsource(mod)
+    except (OSError, TypeError):
+        return []
+    seen = []
+    for m in _PATH_LITERAL.findall(src):
+        if m not in seen:
+            seen.append(m)
+    return seen
+
+
+def collector_source_files(collector) -> list:
+    """The raw source files a collector reads, for the trace (code-derived).
+
+    Prefer the non-rotated files from its *PATHS constants; when it has none (a
+    state collector that builds paths inline/by glob), scan its source for the path
+    literals it reads. Returns [] only if neither yields anything.
+    """
+    primary = _non_rotated(collector_paths(collector))
+    return primary if primary else _scan_source_paths(collector)
 
 
 def facet_event_type_names(facet: str) -> list:
@@ -76,7 +103,7 @@ def facet_event_type_names(facet: str) -> list:
 
 def build() -> str:
     inv = eventtype_to_collectors()
-    firstpath = collector_first_paths()
+    srcfiles = {c.source_id: collector_source_files(c) for c in default_collectors()}
     q_by_facet = defaultdict(list)
     for q in PRODUCTION_CONTRACT:
         q_by_facet[q.facet].append(q.id)
@@ -124,10 +151,13 @@ def build() -> str:
             col_disp = ", ".join(f"`{c}`" for c in cols) or "—"
             srcs = []
             for c in cols:
-                p = firstpath.get(c, "?")
-                if p not in srcs:
-                    srcs.append(p)
-            src_disp = ", ".join(f"`{p}`" for p in srcs) or "—"
+                for p in srcfiles.get(c, []):
+                    if p not in srcs:
+                        srcs.append(p)
+            shown = srcs[:6]
+            src_disp = ", ".join(f"`{p}`" for p in shown) or "_(dynamic)_"
+            if len(srcs) > 6:
+                src_disp += f" (+{len(srcs) - 6})"
         lines.append(f"| `{f}` | {kind} | {ets_disp} | {col_disp} | {src_disp} | {n} |")
 
     lines += [

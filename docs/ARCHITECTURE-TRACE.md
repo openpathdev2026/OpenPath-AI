@@ -1,6 +1,6 @@
 # OpenPath-AI — Architecture Trace
 
-_Generated 2026-09-26T10:22:42.406154+00:00 by `scripts/gen_architecture_trace.py` — regenerate to re-verify._
+_Generated 2026-09-26T10:50:21.821809+00:00 by `scripts/gen_architecture_trace.py` — regenerate to re-verify._
 
 Walk any user-visible answer back to the raw evidence it rests on:
 
@@ -17,30 +17,30 @@ Every link is derived from the shipped code (the facet↔EventType map, the Even
 | `core` | aggregate | _federates the 12 data facets_ | _(union of data-facet collectors)_ | _(union of data-facet sources)_ | 2 |
 | `timeline` | aggregate | _federates the 12 data facets_ | _(union of data-facet collectors)_ | _(union of data-facet sources)_ | 5 |
 | `sessions` | data | `SESSION` | `wtmp` | `var/log/wtmp` | 5 |
-| `login` | data | `SESSION`, `SSH_AUTH`, `LOGIN` | `wtmp`, `journal.sshd`, `auth`, `btmp` | `var/log/wtmp`, `var/log/openpath/journal-sshd.jsonl`, `var/log/auth.log`, `var/log/btmp` | 11 |
-| `privilege` | data | `PRIVILEGE_ESCALATION`, `SESSION` | `auditd`, `auth`, `wtmp` | `var/log/audit/audit.log`, `var/log/auth.log`, `var/log/wtmp` | 6 |
-| `root_activity` | data | `EXEC`, `FILE_CHANGE`, `NETWORK` | `auditd`, `auth` | `var/log/audit/audit.log`, `var/log/auth.log` | 7 |
-| `commands` | data | `EXEC` | `auditd`, `auth` | `var/log/audit/audit.log`, `var/log/auth.log` | 17 |
+| `login` | data | `SESSION`, `SSH_AUTH`, `LOGIN` | `wtmp`, `journal.sshd`, `auth`, `btmp` | `var/log/wtmp`, `var/log/openpath/journal-sshd.jsonl`, `var/log/openpath/journal-sshd.json`, `var/log/journal-sshd.jsonl`, `var/log/auth.log`, `var/log/secure` (+1) | 11 |
+| `privilege` | data | `PRIVILEGE_ESCALATION`, `SESSION` | `auditd`, `auth`, `wtmp` | `var/log/audit/audit.log`, `var/log/auth.log`, `var/log/secure`, `var/log/wtmp` | 6 |
+| `root_activity` | data | `EXEC`, `FILE_CHANGE`, `NETWORK` | `auditd`, `auth` | `var/log/audit/audit.log`, `var/log/auth.log`, `var/log/secure` | 7 |
+| `commands` | data | `EXEC` | `auditd`, `auth` | `var/log/audit/audit.log`, `var/log/auth.log`, `var/log/secure` | 17 |
 | `files` | data | `FILE_CHANGE` | `auditd` | `var/log/audit/audit.log` | 17 |
-| `accounts` | data | `ACCOUNT_CHANGE` | `auditd`, `auth` | `var/log/audit/audit.log`, `var/log/auth.log` | 8 |
-| `groups` | data | `GROUP_CHANGE` | `auditd`, `auth` | `var/log/audit/audit.log`, `var/log/auth.log` | 2 |
-| `packages` | data | `PACKAGE_CHANGE` | `packages` | `var/log/dnf.rpm.log` | 12 |
+| `accounts` | data | `ACCOUNT_CHANGE` | `auditd`, `auth` | `var/log/audit/audit.log`, `var/log/auth.log`, `var/log/secure` | 8 |
+| `groups` | data | `GROUP_CHANGE` | `auditd`, `auth` | `var/log/audit/audit.log`, `var/log/auth.log`, `var/log/secure` | 2 |
+| `packages` | data | `PACKAGE_CHANGE` | `packages` | `var/log/dnf.rpm.log`, `var/log/dpkg.log` | 12 |
 | `network` | data | `NETWORK` | `auditd` | `var/log/audit/audit.log` | 7 |
-| `persistence` | data | `PERSISTENCE` | `persistence` | `(dynamic)` | 7 |
-| `authorization` | data | `AUTHZ` | `authz` | `(dynamic)` | 6 |
-| `system_lifecycle` | data | `BOOT`, `SYSTEM` | `wtmp`, `journald` | `var/log/wtmp`, `var/log/openpath/journal.jsonl` | 13 |
-| `pkg_policy` | data | `PKG_POLICY` | `pkgpolicy` | `(dynamic)` | 4 |
-| `process_tree` | data | `EXEC` | `auditd`, `auth` | `var/log/audit/audit.log`, `var/log/auth.log` | 1 |
-| `shell_history` | data | `SHELL_HISTORY` | `shell_history` | `(dynamic)` | 1 |
-| `firewall` | data | `FIREWALL` | `firewall` | `(dynamic)` | 1 |
+| `persistence` | data | `PERSISTENCE` | `persistence` | `etc/crontab`, `etc/cron.d`, `etc/cron.hourly`, `etc/cron.daily`, `etc/cron.weekly`, `etc/cron.monthly` (+8) | 7 |
+| `authorization` | data | `AUTHZ` | `authz` | `etc/sudoers`, `etc/sudoers.d`, `etc/ssh/sshd_config`, `etc/passwd`, `etc/group`, `etc/shadow` (+2) | 6 |
+| `system_lifecycle` | data | `BOOT`, `SYSTEM` | `wtmp`, `journald` | `var/log/wtmp`, `var/log/openpath/journal.jsonl`, `var/log/openpath/journal.json`, `var/log/journal.jsonl` | 13 |
+| `pkg_policy` | data | `PKG_POLICY` | `pkgpolicy` | `var/log/dnf.rpm.log`, `var/log/dpkg.log`, `var/log/yum.log`, `var/log/pacman.log`, `var/log/zypp/history`, `var/log/snapd.log` (+8) | 4 |
+| `process_tree` | data | `EXEC` | `auditd`, `auth` | `var/log/audit/audit.log`, `var/log/auth.log`, `var/log/secure` | 1 |
+| `shell_history` | data | `SHELL_HISTORY` | `shell_history` | _(dynamic)_ | 1 |
+| `firewall` | data | `FIREWALL` | `firewall` | `etc/sysconfig/iptables`, `etc/iptables/rules.v4`, `var/log/openpath/iptables-save.txt`, `etc/nftables.conf`, `var/log/openpath/nft-ruleset.txt` | 1 |
 | `file_access` | data | `FILE_READ` | `auditd` | `var/log/audit/audit.log` | 1 |
-| `netflow` | data | `NETFLOW` | `conntrack` | `proc/net/nf_conntrack` | 3 |
-| `netlogs` | data | `NETLOG` | `netlogs` | `var/log/openpath/dns.log` | 4 |
+| `netflow` | data | `NETFLOW` | `conntrack` | `proc/net/nf_conntrack`, `var/log/openpath/conntrack.txt` | 3 |
+| `netlogs` | data | `NETLOG` | `netlogs` | `var/log/openpath/dns.log`, `var/log/dnsmasq.log`, `var/log/openpath/firewall.log`, `var/log/squid/access.log`, `var/log/openpath/proxy.log`, `var/log/openpath/socket-lifetimes.jsonl` | 4 |
 | `host_changes` | aggregate | _federates the 12 data facets_ | _(union of data-facet collectors)_ | _(union of data-facet sources)_ | 1 |
 | `attribution` | aggregate | _federates the 12 data facets_ | _(union of data-facet collectors)_ | _(union of data-facet sources)_ | 1 |
 | `concurrent` | aggregate | _federates the 12 data facets_ | _(union of data-facet collectors)_ | _(union of data-facet sources)_ | 1 |
-| `file_integrity` | data | `FILE_DIFF` | `file_integrity` | `var/log/openpath/file-diffs.jsonl` | 1 |
-| `origin_reputation` | data | `SESSION`, `SSH_AUTH` | `wtmp`, `journal.sshd`, `auth` | `var/log/wtmp`, `var/log/openpath/journal-sshd.jsonl`, `var/log/auth.log` | 1 |
+| `file_integrity` | data | `FILE_DIFF` | `file_integrity` | `var/log/openpath/file-diffs.jsonl`, `var/log/openpath/file-diffs.json` | 1 |
+| `origin_reputation` | data | `SESSION`, `SSH_AUTH` | `wtmp`, `journal.sshd`, `auth` | `var/log/wtmp`, `var/log/openpath/journal-sshd.jsonl`, `var/log/openpath/journal-sshd.json`, `var/log/journal-sshd.jsonl`, `var/log/auth.log`, `var/log/secure` | 1 |
 | `evidence` | aggregate | _federates the 12 data facets_ | _(union of data-facet collectors)_ | _(union of data-facet sources)_ | 2 |
 | `gaps` | aggregate | _federates the 12 data facets_ | _(union of data-facet collectors)_ | _(union of data-facet sources)_ | 6 |
 

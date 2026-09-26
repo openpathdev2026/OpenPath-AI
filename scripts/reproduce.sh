@@ -27,7 +27,11 @@ check(){ # check "<label>" <exit-status>
 step "Environment"
 python3 --version || { echo "python3 required"; exit 2; }
 
-step "Install by documented instructions (throwaway venv, no deps)"
+step "Install the package (throwaway venv) — the same install the Containerfile uses"
+# `pip install --no-deps .` is exactly the Containerfile's install line (zero
+# third-party deps, so nothing is fetched); it produces the openpath-ai console
+# entry point pyproject declares. (README also documents the editable form
+# `pip install -e .`; both yield the same entry point.)
 VENV="$(mktemp -d)/venv"
 python3 -m venv "$VENV"
 # shellcheck disable=SC1091
@@ -43,10 +47,27 @@ python3 -m unittest discover -s tests -p 'test_*.py' >/tmp/repro_tests.log 2>&1
 check "unittest discover green" $?
 tail -1 /tmp/repro_tests.log
 
-step "Regenerate every evidence / sign-off artifact"
+step "Regenerate evidence / sign-off artifacts to a temp dir (working tree untouched)"
+# Generate to --out under a temp dir so a clean checkout stays clean, and assert the
+# regenerated artifact CONTAINS its load-bearing content -- so a generator that runs
+# but emits wrong/empty output fails here, not silently passes on exit 0 alone.
+TMPD="$(mktemp -d)"
 for g in gen_evidence_surface gen_architecture_trace gen_evidence_package \
          gen_signoff_package; do
-  python3 "scripts/$g.py" >/dev/null 2>&1; check "$g.py regenerates" $?
+  case "$g" in
+    gen_evidence_surface)  need="Evidence Surface" ;;
+    gen_architecture_trace) need="Architecture Trace" ;;
+    gen_evidence_package)  need="153 questions" ;;
+    gen_signoff_package)   need="Go / No-Go" ;;
+  esac
+  out="$TMPD/$g.md"
+  python3 "scripts/$g.py" --out "$out" >/dev/null 2>&1
+  rc=$?
+  if [[ $rc -eq 0 && -s "$out" ]] && grep -qF "$need" "$out"; then
+    ok "$g.py regenerates and contains '$need'"
+  else
+    bad "$g.py regenerate/content (exit $rc)"
+  fi
 done
 
 step "Host Truth Corpus — ten investigation scenarios"
@@ -59,10 +80,18 @@ from tests.corpus.build_scenario_host import build
 from pathlib import Path
 build(Path(sys.argv[1]), datetime(2026,9,25,12,0,0,tzinfo=timezone.utc))
 PY
+# Redirect (no pipe) so truth_corpus.py's exit code is preserved, then check BOTH
+# the exit code (0 == every case matched) AND the printed tally.
 python3 scripts/truth_corpus.py --data-root "$SCEN" \
   --truth tests/corpus/scenarios_ground_truth.json --now "$NOW" \
-  --format text | tee /tmp/repro_corpus.log | tail -3
-grep -q "10/10 matched" /tmp/repro_corpus.log; check "truth corpus 10/10 matched" $?
+  --format text > /tmp/repro_corpus.log 2>&1
+rc=$?
+tail -3 /tmp/repro_corpus.log
+if [[ $rc -eq 0 ]] && grep -q "10/10 matched" /tmp/repro_corpus.log; then
+  ok "truth corpus 10/10 matched (exit 0)"
+else
+  bad "truth corpus (exit $rc)"
+fi
 
 step "RESULT"
 echo "  $PASS passed, $FAIL failed"
