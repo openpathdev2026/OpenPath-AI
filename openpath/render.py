@@ -82,11 +82,15 @@ def render_readiness(report: ReadinessReport) -> str:
                 lines.append(f"           remedy: {g.remedy}")
     lines.append("")
     lines.append("SOURCES")
+    _now = report.ledger.window.end
     for cov in report.ledger.sources:
         horizon = (f"{cov.horizon_start.isoformat()} .. {cov.horizon_end.isoformat()}"
                    if cov.horizon_start and cov.horizon_end else "n/a")
+        age = cov.freshness_seconds(_now)
+        fresh = (f"  freshest {int(age // 3600)}h{int((age % 3600) // 60)}m old"
+                 if age is not None else "")
         lines.append(f"  {cov.source_id:14s} {cov.status.value:14s} "
-                     f"records={cov.record_count}  retained {horizon}")
+                     f"records={cov.record_count}  retained {horizon}{fresh}")
         if cov.unparseable:
             lines.append(f"       ! CONSERVATION: {cov.unparseable} record(s) "
                          f"could not be decoded and are unaccounted for"

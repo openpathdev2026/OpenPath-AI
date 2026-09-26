@@ -112,8 +112,34 @@ class SourceCoverage:
         """True if the source produced (or could produce) records for the window."""
         return self.status in (SourceStatus.AVAILABLE, SourceStatus.EMPTY)
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {
+    def freshness_seconds(self, now: datetime) -> Optional[float]:
+        """Age of the NEWEST record vs the analysis anchor, in seconds.
+
+        This is the evidence-freshness signal: how stale the most recent thing this
+        source can attest to is. ``None`` when the source carries no timestamped
+        record (nothing to measure), so a caller never mistakes "unknown" for
+        "fresh". State-snapshot sources (persistence/authz/...) stamp at ``now``, so
+        their freshness is ~0 by construction, which is correct: they describe the
+        present.
+        """
+        if self.horizon_end is None:
+            return None
+        return (now.astimezone(timezone.utc)
+                - self.horizon_end.astimezone(timezone.utc)).total_seconds()
+
+    def is_stale(self, now: datetime, max_age_seconds: float) -> bool:
+        """True when the newest record is older than ``max_age_seconds``.
+
+        Only meaningful for a source that should be continuously fed; a source with
+        no timestamped record (freshness None) is not called stale here -- absence is
+        a coverage question, staleness a freshness one, and the two are kept
+        distinct so neither masks the other.
+        """
+        age = self.freshness_seconds(now)
+        return age is not None and age > max_age_seconds
+
+    def to_dict(self, now: Optional[datetime] = None) -> Dict[str, Any]:
+        d = {
             "source_id": self.source_id,
             "status": self.status.value,
             "detail": self.detail,
@@ -127,6 +153,9 @@ class SourceCoverage:
             "instrumentation": [c.to_dict() for c in self.instrumentation],
             "locations": list(self.locations),
         }
+        if now is not None:
+            d["freshness_seconds"] = self.freshness_seconds(now)
+        return d
 
 
 def ledger_source_met(ledger: "CoverageLedger", source_id: str,
@@ -287,8 +316,10 @@ class CoverageLedger:
         return out
 
     def to_dict(self) -> Dict[str, Any]:
+        # The window end is the analysis anchor; freshness is measured against it.
+        now = self.window.end
         return {
             "window": self.window.to_dict(),
-            "sources": [s.to_dict() for s in self.sources],
+            "sources": [s.to_dict(now=now) for s in self.sources],
             "gaps": [g.to_dict() for g in self.all_gaps()],
         }

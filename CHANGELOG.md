@@ -6,6 +6,23 @@ based on Keep a Changelog; dates are UTC.
 ## [Unreleased]
 
 ### Added
+- **Trust roadmap: production-readiness matrix + freshness measurement.** Readiness
+  is now tracked on two axes -- the 153/153 certification (feature roadmap) AND a
+  cross-cutting trust matrix (`docs/PRODUCTION-READINESS.md`) with honest per-area
+  status + the enforcing test: evidence conservation, attribution correctness,
+  session correlation, freshness, log rotation, restart/recovery, real-host
+  validation, documentation parity, catalog completeness, container deployment.
+  New this pass: **freshness measurement** (`SourceCoverage.freshness_seconds` /
+  `is_stale`, surfaced in `--coverage`; a source with no timestamped record reports
+  None, never a fabricated "fresh"); a **documentation-parity test**
+  (`test_docs_parity_with_contract` fails if the catalog doc's counts drift from the
+  code contract); and validated **real-host** behavior by running the live-host
+  suite against the container's real `/` (the new state collectors parse real
+  `/etc/cron.d`, `/etc/group`, `/etc/shadow`, `/proc/net`). The contract now states
+  the **completeness principle**: every discoverable question is either CERTIFIED or
+  explicitly excluded with a principled reason -- a permanent CONTRACTED is a work
+  item, not a resting place.
+
 - **File content diffs (FS-13) and login-origin reputation (IA-10) -- the full
   contract is now CERTIFIED (153/153, CONTRACTED 0).** FS-13: a file-integrity
   collector + facet read before/after content from a FIM / content-snapshot bundle

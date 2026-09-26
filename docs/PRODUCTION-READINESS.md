@@ -8,6 +8,46 @@ through the shipped CLI with **cited, evidence-scoped, gap-disclosing** findings
 This document is the readiness matrix: what "CERTIFIED" means, how each question is
 proven, the invariants that keep answers honest, and the runtime boundaries.
 
+**Two roadmaps, both required.** The 153/153 certification program is the *feature*
+roadmap. The trust matrix below is the *trust* roadmap — cross-cutting properties
+that are independent of question count. A system with every question certified but
+weak attribution or no real-host validation is still not production-ready, so both
+must hold. The narration is only ever as trustworthy as the evidence path behind it.
+
+## Trust roadmap (production-readiness matrix)
+
+Honest status per cross-cutting area, each backed by the test(s) that enforce it.
+`GOOD` marks a real, tested property with a stated limitation; it is not a euphemism
+for done-enough.
+
+| Area | Status | Evidence / caveat |
+|------|--------|-------------------|
+| Evidence conservation | STRONG | `records_scanned`/`unparseable` on all 16 collectors; `conservation_gaps()` surfaces any drop; `TestEvidenceConservation` (truncated wtmp tail, unparseable package/journal/cron/sudoers lines counted, consumed-source degrade). |
+| Attribution correctness | STRONG | auid-centric `Subject.matches` (survives sudo/su); `TestRootAttribution` (ssh-as-root, escalation→base-user only, unresolved uid not falsely attributed); `TestMultiUserSweep` (no cross-attribution); wrong-user isolation in `TestQueryLayer`; TM-06 labels each action high/medium/low. |
+| Session correlation | GOOD | session intervals + overlap (IA-05), still-open (IA-04), reboot-terminated (SL-03), concurrent cross-user (TM-13); auid ties actions across an identity switch. *Caveat: correlation is by auid+time, not by the audit `ses=` id (a possible future refinement).* |
+| Freshness measurement | STRONG | per-source retention horizon + `freshness_seconds`/`is_stale` (age of newest record vs the analysis anchor), surfaced in `--coverage`; `test_freshness_and_staleness_measure`. A source with no timestamped record reports freshness `None`, never a fabricated "fresh". |
+| Log rotation handling | STRONG | reads rotated `.1` files; `retention_bounded` + `horizon_shortfalls()`; `test_event_split_across_rotation_is_reunited`; a genuine retention gap is disclosed, a merely-quiet log is not. |
+| Restart / recovery | STRONG (by design) | stateless CLI (collect → analyze → exit); no persistent state to corrupt or recover; a re-run is idempotent; `TestStreaming` proves bounded memory on large/rotated logs. |
+| Real-host validation | VALIDATED | `tests/live/test_live_host.py` runs every facet against the real `/` filesystem — no facet raises, every event cited, gaps disclosed; run on this container it parsed real `/etc/cron.d`, `/etc/group` (ubuntu in sudo/adm), `/etc/shadow` (`_apt` locked), `/proc/net`. *Caveat: a fully-instrumented, rule-loaded auditd host still needs an operator to drive `scripts/live_conformance.sh`.* |
+| Documentation parity | GOOD | docs generated from the contract; `test_docs_parity_with_contract` fails if `PRODUCTION-CATALOG.md` counts drift from `openpath.contract`; `test_scoreboard_renders_and_counts_match` checks the `--contract` output. |
+| Catalog completeness | GOOD | 153 questions are an output of an evidence-surface analysis; every collector maps to ≥1 certified question; the contract-completeness principle (below) forbids a permanent CONTRACTED. |
+| Container deployment | PARTIAL | runs anywhere Python 3 does; reads a captured evidence **bundle** or a live `/` under `--data-root`; `scripts/` bundles the surface. *Caveat: no packaged container image / long-running service lifecycle is shipped — it is a batch CLI, by design.* |
+
+## Contract-completeness principle
+
+Every question discoverable from the supported evidence surface must resolve to
+**exactly one** of two states:
+
+1. **CERTIFIED** — proven end-to-end, or
+2. **Excluded** from the guaranteed contract with a documented, principled reason —
+   the evidence does not exist on the platform, or answering would require inference
+   rather than evidence.
+
+A permanent **CONTRACTED** state is a work item, never a resting place: build the
+capability, or exclude the question on the record. At this milestone CONTRACTED is
+0 and nothing is excluded — the runtime boundaries below are scope limits on
+*hosts*, not exclusions of *questions*.
+
 ## What CERTIFIED means (and does not)
 
 CERTIFIED is a property of a **question**: its deterministic evidence path exists

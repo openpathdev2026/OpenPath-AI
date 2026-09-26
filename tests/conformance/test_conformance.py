@@ -1676,6 +1676,26 @@ class TestQueryCertification(Base):
         # TM-12 / PK-12: conservation counters exist per source (records unaccounted-for).
         self.assertIn("unparseable", srcs["packages"])
         self.assertIn("records_scanned", srcs["auditd"])
+        # Freshness: the age of the newest record vs the analysis anchor is reported
+        # per timestamped source, and a state-only source (no timestamped record)
+        # reports None rather than a fabricated freshness.
+        self.assertIn("freshness_seconds", srcs["auditd"])
+        self.assertIsNotNone(srcs["auditd"]["freshness_seconds"])
+        self.assertGreaterEqual(srcs["auditd"]["freshness_seconds"], 0)
+
+    def test_freshness_and_staleness_measure(self):
+        from openpath.model.coverage import SourceCoverage, SourceStatus
+        now = NOW
+        # a source whose newest record is 2h old
+        cov = SourceCoverage("s", SourceStatus.AVAILABLE,
+                             horizon_end=now - timedelta(hours=2))
+        self.assertAlmostEqual(cov.freshness_seconds(now), 7200, delta=1)
+        self.assertTrue(cov.is_stale(now, max_age_seconds=3600))
+        self.assertFalse(cov.is_stale(now, max_age_seconds=10800))
+        # a source with no timestamped record: freshness unknown, never "fresh"
+        blank = SourceCoverage("s2", SourceStatus.AVAILABLE)
+        self.assertIsNone(blank.freshness_seconds(now))
+        self.assertFalse(blank.is_stale(now, max_age_seconds=1))  # unknown != stale
 
     def test_nw13_evidenced_negative_cleared(self):
         # A fully-instrumented host where alice made no network connections: she can
@@ -2965,6 +2985,24 @@ class TestProductionContract(Base):
         from openpath.contract import PRODUCTION_CONTRACT
         ids = [q.id for q in PRODUCTION_CONTRACT]
         self.assertEqual(len(ids), len(set(ids)))
+
+    def test_docs_parity_with_contract(self):
+        """Documentation parity: the published catalog doc's headline counts must
+        match the code contract, so the docs can't silently drift from reality."""
+        import os
+        from openpath.contract import status_counts, CatalogStatus, PRODUCTION_CONTRACT
+        c = status_counts()
+        cert, con = c[CatalogStatus.CERTIFIED], c[CatalogStatus.CONTRACTED]
+        here = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        doc = os.path.join(here, "docs", "PRODUCTION-CATALOG.md")
+        if not os.path.exists(doc):
+            self.skipTest("catalog doc not present")
+        text = open(doc).read()
+        self.assertIn(f"CERTIFIED {cert}", text,
+                      "PRODUCTION-CATALOG.md certified count is stale vs contract")
+        self.assertIn(f"CONTRACTED {con}", text,
+                      "PRODUCTION-CATALOG.md contracted count is stale vs contract")
+        self.assertIn(f"**{len(PRODUCTION_CONTRACT)} questions**", text)
 
     def test_certified_facets_are_wired(self):
         """A CERTIFIED question must point at a real, runnable facet; a CONTRACTED

@@ -10,9 +10,17 @@ the collector or subsystem it needs). A CONTRACTED question is NEVER presented a
 certified or answered from thin air.
 
 CERTIFIED here = the wired 15 PLUS the questions the deterministic query/filter/
-pivot layer (``openpath/query.py``) now answers end-to-end, each with a proving CLI
-conformance test (TestQueryLayer). The count (153) is an OUTPUT of the evidence-
-surface analysis, not a target.
+pivot layer (``openpath/query.py``) and the state/telemetry collectors now answer
+end-to-end, each with a proving CLI conformance test. The count (153) is an OUTPUT
+of the evidence-surface analysis, not a target.
+
+Contract-completeness principle. Every question discoverable from the supported
+evidence surface must resolve to exactly one of two states: (1) CERTIFIED, or
+(2) explicitly excluded from the guaranteed contract with a documented, principled
+reason (the evidence does not exist on the platform, or the answer would require
+inference rather than evidence). A permanent CONTRACTED state is not an acceptable
+resting place -- a CONTRACTED question is a work item, either to build the missing
+capability or to exclude it on the record. At this milestone CONTRACTED is 0.
 """
 
 from __future__ import annotations
