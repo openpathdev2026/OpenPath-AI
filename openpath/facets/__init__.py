@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Type
 
 from openpath.facets.accounts import AccountsFacet, GroupsFacet
+from openpath.facets.authorization import AuthorizationFacet
 from openpath.facets.base import AnalysisContext, Facet
 from openpath.facets.files import FilesFacet
 from openpath.facets.meta import CoreFacet, EvidenceFacet, GapsFacet
@@ -51,8 +52,9 @@ FAMILIES: List[FamilySpec] = [
     FamilySpec(11, "packages", "Packages", PackagesFacet),
     FamilySpec(12, "network", "Network", NetworkFacet),
     FamilySpec(13, "persistence", "Persistence", PersistenceFacet),
-    FamilySpec(14, "evidence", "Evidence", EvidenceFacet),
-    FamilySpec(15, "gaps", "Gaps", GapsFacet),
+    FamilySpec(14, "authorization", "Authorization", AuthorizationFacet),
+    FamilySpec(15, "evidence", "Evidence", EvidenceFacet),
+    FamilySpec(16, "gaps", "Gaps", GapsFacet),
 ]
 
 _BY_NAME: Dict[str, FamilySpec] = {spec.name: spec for spec in FAMILIES}

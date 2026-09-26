@@ -50,6 +50,12 @@ class EventType(enum.Enum):
     # artifact names a user (a per-user crontab) or a file-change event ties one.
     PERSISTENCE = "persistence"
 
+    # Authorization / privilege configuration (current-state inventory: privileged
+    # group membership, sudoers policy, shadow account status, SSH authorized_keys,
+    # SSH auth policy). Attributed to the account a rule/artifact names; host-wide
+    # policy (e.g. sshd PermitRootLogin) is unattributed.
+    AUTHZ = "authz"
+
     # Network
     NETWORK = "network"          # connect/bind/listen
 
@@ -142,6 +148,8 @@ class Event:
             return ("package", a.get("package") or "?")
         if t is EventType.PERSISTENCE:
             return ("persistence", a.get("artifact") or a.get("path") or self.summary)
+        if t is EventType.AUTHZ:
+            return ("authz", a.get("artifact") or a.get("subject") or self.summary)
         if t is EventType.PRIVILEGE_ESCALATION:
             if a.get("cmd"):
                 return ("command", a.get("cmd"))

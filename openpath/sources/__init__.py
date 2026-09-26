@@ -9,6 +9,7 @@ from typing import List
 
 from openpath.sources.auditd import AuditdCollector
 from openpath.sources.auth import SyslogAuthCollector
+from openpath.sources.authz import AuthzCollector
 from openpath.sources.base import CollectResult, Collector
 from openpath.sources.btmp import BtmpCollector
 from openpath.sources.journal_sshd import SshdJournalCollector
@@ -26,6 +27,7 @@ def default_collectors() -> List[Collector]:
         SyslogAuthCollector(),
         PackageCollector(),
         PersistenceCollector(),
+        AuthzCollector(),
     ]
 
 
@@ -39,5 +41,6 @@ __all__ = [
     "SyslogAuthCollector",
     "PackageCollector",
     "PersistenceCollector",
+    "AuthzCollector",
     "default_collectors",
 ]

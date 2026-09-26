@@ -426,6 +426,27 @@ class HostBuilder:
         self._persist["etc/rc.local"] = ["#!/bin/sh"] + list(lines) + ["exit 0"]
         return self
 
+    # -- authorization state (sudoers / shadow / ssh keys / ssh policy) ------ #
+    # (reuses the generic state-file accumulator flushed in write())
+    def sudoers(self, line):
+        return self._persist_add("etc/sudoers", line)
+
+    def sudoers_d(self, name, line):
+        return self._persist_add(f"etc/sudoers.d/{name}", line)
+
+    def shadow(self, acct, pw):
+        """A line in /etc/shadow. pw '!'/'*'/'' encode locked/passwordless."""
+        return self._persist_add("etc/shadow", f"{acct}:{pw}:19000:0:99999:7:::")
+
+    def authorized_key(self, user, keyline):
+        rel = f"home/{user}/.ssh/authorized_keys"
+        return self._persist_add(rel, keyline)
+
+    def sshd_config(self, **directives):
+        for k, v in directives.items():
+            self._persist_add("etc/ssh/sshd_config", f"{k} {v}")
+        return self
+
     def rotate_logs(self):
         """Move everything accumulated so far into rotated (.1) files.
 

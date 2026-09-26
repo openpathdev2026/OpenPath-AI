@@ -33,6 +33,7 @@ not belong in the product.
 | `auditd` (audit.log + rules) | Q05 Q06 Q07 Q08 Q09 Q10 Q12 |
 | `packages` (dnf.rpm/dpkg) | Q11 |
 | `persistence` (cron/at, systemd units/timers, linger, legacy startup) | SP-01 SP-06 SP-07 SP-13 SP-14 SP-15 |
+| `authz` (group/sudoers/shadow, ~/.ssh/authorized_keys, sshd_config) | AC-10 AC-11 AC-12 PV-10 PV-11 IA-12 |
 
 Every collector is used by at least one certified question. There is no source
 in the codebase that no catalog question requires.
@@ -49,6 +50,7 @@ high-tier one carries. When audit and wtmp disagree, audit is authoritative.
 | 1 | Activity (WHAT ran / files touched) | `auditd` (EXECVE/PATH/CWD), `auth` (sudo-only) | commands, files, root actions |
 | 2 | System state changes (WHAT changed) | `packages`, `auditd` (ADD/DEL user/group), `auth` | software, accounts, groups |
 | 2 | Persistence state (WHAT is configured to auto-run) | `persistence` (cron/at, systemd units/timers, linger, rc.local), `auditd`/`auth` (establishment acts) | scheduled jobs, enabled units, boot persistence |
+| 2 | Authorization state (WHO holds privilege) | `authz` (group/sudoers/shadow, authorized_keys, sshd_config), `auditd`/`auth` (grant-change acts) | privileged group membership, sudo grants, locked/passwordless accounts, SSH key access, SSH auth policy |
 | 3 | Network (WHERE from / to) | `auditd` (connect/bind + SOCKADDR), `auth`/`journal.sshd` (ssh origin) | egress/ingress, remote origin |
 | 4 | Session corroboration (SUPPORTING) | `wtmp`, `btmp` | confirms a login happened / from where; session-duration intervals; failed logins |
 

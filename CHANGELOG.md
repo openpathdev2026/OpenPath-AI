@@ -6,6 +6,27 @@ based on Keep a Changelog; dates are UTC.
 ## [Unreleased]
 
 ### Added
+- **Authorization-state collector + facet (`openpath/sources/authz.py`,
+  `openpath/facets/authorization.py`).** The second current-STATE source: it
+  answers "who holds elevated privilege, and did the user grant or change any of
+  it?". It inventories privileged group membership (sudo/wheel/docker/... by
+  explicit member and by primary gid, from `/etc/group` + `/etc/passwd`), sudoers
+  grants (`/etc/sudoers` + `/etc/sudoers.d/*`, expanding `%group` specs to their
+  members), locked/passwordless accounts (`/etc/shadow`), SSH `authorized_keys`
+  per account, and SSH auth policy (`sshd_config` PermitRootLogin /
+  PasswordAuthentication). Each artifact is attributed to the account a rule
+  *names* (group member, sudo user, shadow account, key owner); host-wide policy is
+  unattributed. Per-sub-source instrumentation checks are recorded so a missing
+  `/etc/shadow` is disclosed by Gaps rather than yielding a false "no locked
+  accounts". The facet federates state with in-window authorization-change ACTS (a
+  FILE_CHANGE to sudoers/group/shadow/authorized_keys/pam.d or an audited
+  usermod/gpasswd/visudo execve, attributed by auid); it is the 16th question
+  family, federated into Core. Seven contract questions move CONTRACTED ->
+  CERTIFIED (84 total): AC-10 privileged group membership, AC-11 locked/passwordless
+  accounts, AC-12 SSH authorized_key grants, AC-13 auth-config edits (via the files
+  path query), PV-10 sudo grants, PV-11 authorization-change footprint, IA-12 SSH
+  auth policy -- each with a CLI-path proving test in `TestAuthorization`
+  (+ cross-user isolation, missing-shadow disclosure, and conservation).
 - **Persistence-state collector + facet (`openpath/sources/persistence.py`,
   `openpath/facets/persistence.py`).** The first current-STATE evidence source
   (everything prior was time-stamped acts). It inventories what is configured to

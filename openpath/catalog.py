@@ -26,7 +26,7 @@ _S = EvidenceSpec.make
 # The data facets a federated overview draws on.
 _DATA_FACETS = ("sessions", "login", "privilege", "root_activity", "commands",
                 "files", "accounts", "groups", "packages", "network",
-                "persistence")
+                "persistence", "authorization")
 
 
 @dataclass(frozen=True)
@@ -141,6 +141,24 @@ _BY_FACET.setdefault(
         "units/timers, startup config) during the window?",
         "persistence", ("persistence", "auditd", "auth"), True,
         _PERSISTENCE_SPEC),
+)
+
+# The authorization facet (family 16) federates into Core and answers the
+# privilege-configuration contract questions (AC-10/11/12, PV-10/11, IA-12). Its
+# authz STATE source alone makes the inventory answerable; auditd/auth corroborate
+# in-window authorization changes. Registered like persistence: spec + requirement
+# are consistent, and the CATALOG id set is left unchanged.
+_AUTHZ_SPEC = _S(certified=[["authz"]],
+                 supporting=["auditd", "auth"],
+                 fatal=["authz"])
+_BY_FACET.setdefault(
+    "authorization",
+    CatalogQuestion(
+        "AC-10",
+        "Who currently holds elevated privilege (group membership, sudoers), and "
+        "did {user} grant or change any authorization?",
+        "authorization", ("authz", "auditd", "auth"), True,
+        _AUTHZ_SPEC),
 )
 
 

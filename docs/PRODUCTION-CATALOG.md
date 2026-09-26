@@ -5,7 +5,7 @@ The full set of user-facing forensic questions OpenPath commits to, each with a
 count is an output of the analysis, not a target. Certification is a property of
 a question, not a limit on which questions exist.
 
-**153 questions** — CERTIFIED 77, CONTRACTED 76.
+**153 questions** — CERTIFIED 84, CONTRACTED 69.
 
 - **CERTIFIED** — wired and proven end-to-end today (see `catalog.py` + the
   conformance suite). Complete *within the covered evidence scope*, never absolute.
@@ -45,6 +45,10 @@ a question, not a limit on which questions exist.
 | AC-05 | Did {user} add any account (including themselves) to a privileged group such as sudo, wheel, docker, or root? | `groups` | auditd, auth, wtmp |
 | AC-06 | Did {user} attempt an account or group change that failed or was denied? | `accounts` | auditd, auth |
 | AC-07 | When did {user} make each account/group change, relative to their login and to the incident? | `timeline` | auditd, auth, wtmp |
+| AC-10 | Who is currently a member of a privileged group (sudo, wheel, docker, root)? | `authorization` | /etc/group + /etc/passwd state collector, auditd |
+| AC-11 | Which accounts are currently locked, passwordless, or have password/expiry anomalies (e.g. a second UID-0 account)? | `authorization` | shadow-state + faillock/faillog collector, auditd |
+| AC-12 | Did {user} install an SSH authorized_key (or otherwise grant key-based access) for any account? | `authorization` | authorized_keys / SSH-authz collector, auditd(host-wide file-change rule) |
+| AC-13 | Did {user} modify authentication or authorization configuration (/etc/pam.d, /etc/nsswitch.conf, /etc/security)? | `files` | PAM / auth-config collector, auditd(host-wide file-change rule) |
 | EX-01 | Did {user} run a specific command or binary (curl, wget, nc, base64, a named tool)? | `commands` | auditd(execve audit rule), auth |
 | EX-02 | What ordinary (non-sudo) commands did {user} run? | `commands` | auditd(execve audit rule), wtmp |
 | EX-06 | From what terminal/TTY did {user} run commands (interactive vs non-interactive)? | `commands` | auditd(execve audit rule), wtmp |
@@ -63,6 +67,7 @@ a question, not a limit on which questions exist.
 | FS-10 | When did {user}'s file changes occur relative to the incident (file-activity timeline)? | `timeline` | auditd(host-wide file-change rule), auditd(file watch/modify audit rule), wtmp |
 | IA-02 | Did {user} fail to authenticate — how many failed attempts, and from where? | `login` | btmp, journal.sshd, auth |
 | IA-06 | Who accessed this host during the window (all authenticated principals)? | `login` | wtmp, journal.sshd, auth, btmp |
+| IA-12 | Is SSH root login or password authentication even permitted on this host (auth policy)? | `authorization` | sshd config collector, journal.sshd, auth |
 | NW-01 | What outbound network connections did {user} make, and to which destinations and ports? | `network` | auditd(connect audit rule) |
 | NW-02 | Did {user} connect to a specific known-bad IP, host, or port (IOC match)? | `network` | auditd(connect audit rule), auditd(bind audit rule) |
 | NW-05 | What ports or sockets did {user} bind or listen on — any new listeners or backdoors? | `network` | auditd(bind audit rule) |
@@ -79,6 +84,8 @@ a question, not a limit on which questions exist.
 | PV-04 | What exact commands did {user} run as root (full command lines)? | `commands` | auditd(execve audit rule), auth |
 | PV-05 | Did {user} obtain an interactive root shell (sudo -i, sudo su -, sudo bash)? | `root_activity` | auditd(execve audit rule), auth |
 | PV-08 | When did {user} first and last escalate, and how often (escalation timeline)? | `privilege` | auditd, auth, wtmp |
+| PV-10 | What is {user} permitted to do via sudo, and who else is allowed to escalate on this host (sudoers policy)? | `authorization` | sudoers collector, auditd, auth |
+| PV-11 | Did someone grant {user} sudo rights or modify the sudoers policy (privilege persistence)? | `authorization` | sudoers collector, auditd(host-wide file-change rule), auth |
 | SP-01 | What cron and at scheduled jobs are currently configured on this host, and which are attributable to {user}? | `persistence` | cron/at collector, auditd(execve audit rule), auditd, auth |
 | SP-02 | Did {user} modify any cron configuration files (user crontab, /etc/crontab, /etc/cron.d, /etc/cron.* run-parts)? | `files` | auditd(host-wide file-change rule), auditd(file watch/modify audit rule), wtmp |
 | SP-03 | Did {user} run crontab or at commands to schedule tasks (crontab -e, crontab -, at, batch)? | `commands` | auditd(execve audit rule), auth, wtmp |
@@ -135,12 +142,6 @@ a question, not a limit on which questions exist.
 | TM-13 | What were OTHER users doing around the time of {user}'s action (concurrent/lateral activity)? | core | Only users discoverable from passwd/evidence are enumerated; correlation is temporal co-occurrence, NOT proof of coordination; no cross-h... |
 | TM-14 | Were there periods when {user} was demonstrably present but their activity is invisible to us? | gaps | No facet computes 'session minus visibility' as a bounded interval; no idle-vs-active distinction within a session (no keystroke/tty-acti... |
 
-### Needs: /etc/group + /etc/passwd state collector (current roster + primary GID)  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| AC-10 | Who is currently a member of a privileged group (sudo, wheel, docker, root)? | NEW:group-state | Only membership ADDITIONS within the window are visible (Q10/GRP_MGMT); no roster is read; membership granted before the horizon is invis... |
-
 ### Needs: DNS/resolver query-log collector (systemd-resolved via general journald, dnsmasq/unbound/BIND query logs, or packet-level DNS)  (1)
 
 | ID | Question | Facet | Blind spots |
@@ -183,12 +184,6 @@ a question, not a limit on which questions exist.
 |----|----------|-------|-------------|
 | EX-11 | What was the parent process and process ancestry of {user}'s commands (reconstruct the process tree)? | NEW:process_tree | fork/clone syscalls are NOT in the auditd syscall tables and no facet chains pid→ppid; PID reuse; kernel-thread/daemon roots have no logi... |
 
-### Needs: PAM / auth-config collector (/etc/pam.d/*, /etc/nsswitch.conf, /etc/security/*)  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| AC-13 | Did {user} modify authentication or authorization configuration (/etc/pam.d, /etc/nsswitch.conf, /etc/security)? | NEW:auth-config | An edit is detectable only as a generic FILE_CHANGE if a watch covers the path; OpenPath cannot tell a hardening change from a backdoor (... |
-
 ### Needs: PackageCollector extension (/var/log/yum.log, /var/log/zypp/history, /var/log/pacman.log, snap/flatpak history; + apt/history.log + term.log for apt's native Requested-By)  (1)
 
 | ID | Question | Facet | Blind spots |
@@ -206,12 +201,6 @@ a question, not a limit on which questions exist.
 | ID | Question | Facet | Blind spots |
 |----|----------|-------|-------------|
 | NW-14 | Over what protocol/transport did {user} communicate (TCP vs UDP, or a raw socket)? | network | socket() is never collected, so SOCK_STREAM/DGRAM/RAW is unknown; only connect/bind + SOCKADDR (family+port) available and port is a hint... |
-
-### Needs: authorized_keys / SSH-authz collector (~/.ssh/authorized_keys, sshd AuthorizedKeysFile drop-ins)  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| AC-12 | Did {user} install an SSH authorized_key (or otherwise grant key-based access) for any account? | NEW:ssh-authz | A write is detectable only as a generic FILE_CHANGE if an auditd watch covers the path; the key type/fingerprint, the account authorized,... |
 
 ### Needs: connection-close events (auditd socket close/shutdown syscall collection, or wiring up the parsed-but-unused sshd Disconnect/Connection-closed parsing)  (1)
 
@@ -375,12 +364,6 @@ a question, not a limit on which questions exist.
 |----|----------|-------|-------------|
 | FS-04 | Did {user} tamper with logs or the audit trail itself (delete/truncate /var/log/*, wtmp/btmp, or audit rule files)? | files | Only FILE modifications of log/rule files are seen; runtime audit disable, service stop, or in-memory rule flush are not file events; a s... |
 
-### Needs: shadow-state + faillock/faillog collector (/etc/shadow lock/passwordless/expiry; faillock)  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| AC-11 | Which accounts are currently locked, passwordless, or have password/expiry anomalies (e.g. a second UID-0 account)? | NEW:shadow-state | Lock/unlock EVENTS in-window are a partial proxy; a pre-existing empty-password or !!-locked backdoor account is invisible to change-even... |
-
 ### Needs: shell-history collector (~/.bash_history, ~/.zsh_history, fish_history, incl. root; HISTTIMEFORMAT timestamps)  (1)
 
 | ID | Question | Facet | Blind spots |
@@ -392,24 +375,6 @@ a question, not a limit on which questions exist.
 | ID | Question | Facet | Blind spots |
 |----|----------|-------|-------------|
 | PK-16 | Were any unsigned or untrusted-key packages installed (GPG signature verification)? | NEW:package_integrity | A package installed with --nogpgcheck / from an untrusted key looks identical to a signed one in the transaction log — sideloading/tamper... |
-
-### Needs: sshd config collector (/etc/ssh/sshd_config + /etc/ssh/sshd_config.d/*, effective sshd -T)  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| IA-12 | Is SSH root login or password authentication even permitted on this host (auth policy)? | NEW:ssh_policy | OpenPath reads auth USE, never sshd POLICY; observed root/password logins prove a method was permitted at that moment, not the configured... |
-
-### Needs: sudoers collector (/etc/sudoers + /etc/sudoers.d/*, runas/NOPASSWD/command allowlists, group membership)  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| PV-10 | What is {user} permitted to do via sudo, and who else is allowed to escalate on this host (sudoers policy)? | NEW:sudoers | Sees sudo USE (auditd/auth), never sudo POLICY; NOPASSWD, command restrictions, runas targets, group-based grants unmodeled — an authoriz... |
-
-### Needs: sudoers collector (before/after policy semantics); detecting the raw write is a files-facet fallback  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| PV-11 | Did someone grant {user} sudo rights or modify the sudoers policy (privilege persistence)? | NEW:sudoers | With an auditd file rule on /etc/sudoers* the FILE_CHANGE is detected and attributed by auid, but only as 'this path was modified', not t... |
 
 ### Needs: system_lifecycle facet correlating an audited reboot command with the subsequent BOOT; general journald for non-command reboots (power/watchdog/init/scheduler)  (1)
 

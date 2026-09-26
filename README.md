@@ -275,7 +275,7 @@ Large `audit.log` files are streamed, so memory stays bounded regardless of size
 ```
 openpath/
   model/      # events, citations, coverage, findings, identity, time (pure logic)
-  sources/    # collectors: wtmp (binary), auditd, sshd journal, packages, persistence
+  sources/    # collectors: wtmp (binary), auditd, sshd journal, packages, persistence, authz
   facets/     # one analyzer per question family + Core/Evidence/Gaps aggregators
   engine.py   # collect once -> resolve identity -> run facet
   catalog.py  # the frozen CERTIFIED 15 (wired) + per-question EvidenceSpec

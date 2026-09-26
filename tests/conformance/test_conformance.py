@@ -104,6 +104,13 @@ class Base(unittest.TestCase):
         h.systemd_timer("logrotate.timer", "daily", enabled=True)
         h.systemd_user_unit("alice", "sync-agent.service")
         h.linger("alice")
+        # Authorization state: full surface (group membership via group() above,
+        # a sudo grant, shadow, an SSH key, and SSH auth policy).
+        h.sudoers("alice ALL=(ALL:ALL) ALL")
+        h.shadow("root", "$6$abc$xyz")
+        h.shadow("guest", "!")            # a locked account
+        h.authorized_key("alice", "ssh-ed25519 AAAAC3Nz alice@laptop")
+        h.sshd_config(PermitRootLogin="no", PasswordAuthentication="no")
         h.write()
         return root
 
@@ -889,7 +896,7 @@ class TestReadiness(Base):
         report = self._rd(self.fully_instrumented())
         # all substantive data questions answerable (aggregates not counted)
         self.assertEqual(report.answerable, report.data_total)
-        self.assertEqual(report.data_total, 11)
+        self.assertEqual(report.data_total, 12)
 
     def test_debian_host_blind_on_files_and_network_only(self):
         root = self.make_root()
@@ -1520,6 +1527,7 @@ class TestQueryCertification(Base):
         ("SP-04", "commands", ["--contains", "enable"], "enable"),
         ("SP-11", "commands", ["--contains", "mask"], "mask"),
         ("SP-10", "commands", ["--contains", "systemd-run"], "systemd-run"),
+        ("AC-13", "files", ["--path", "/etc/pam.d/*"], "/etc/pam.d/common-auth"),
     ]
 
     def _rich_host(self):
@@ -1551,6 +1559,7 @@ class TestQueryCertification(Base):
         h.file_change(1001, 0, "creat", "/etc/cron.d/evil", ago(hours=4), euid=0)
         h.file_change(1001, 0, "creat", "/etc/systemd/system/evil.service", ago(hours=4), euid=0)
         h.file_change(1001, 0, "creat", "/etc/rc.local", ago(hours=4), euid=0)
+        h.file_change(1001, 0, "openat", "/etc/pam.d/common-auth", ago(hours=4), euid=0, key="etc")
         h.exec(1001, 0, ["systemctl", "enable", "evil.service"], "/usr/bin/systemctl", ago(hours=4), euid=0, comm="systemctl")
         h.exec(1001, 0, ["systemctl", "mask", "auditd"], "/usr/bin/systemctl", ago(hours=4), euid=0, comm="systemctl")
         h.exec(1001, 0, ["systemd-run", "--on-calendar", "*:0/5", "/tmp/evil"], "/usr/bin/systemd-run", ago(hours=4), euid=0, comm="systemd-run")
@@ -1832,6 +1841,140 @@ class TestPersistence(Base):
         self.assertNotEqual(d["finding"]["confidence"], "certified")
 
 
+class TestAuthorization(Base):
+    """Certifies the authorization-STATE questions (AC-10/11/12, PV-10/11, IA-12)
+    end-to-end through the shipped CLI: privileged-group membership, sudoers grants,
+    locked/passwordless accounts, SSH authorized_keys, SSH auth policy, plus the
+    in-window authorization-change footprint -- each cited, none invented."""
+
+    def _host(self):
+        root = self.make_root()
+        h = HostBuilder(root)
+        (h.passwd("root", 0).passwd("alice", 1001, gid=1001)
+         .passwd("bob", 1002, gid=1002).passwd("svc", 1500, gid=1500))
+        h.group("sudo", 27, ["alice"]).group("docker", 999, ["bob"])
+        h.enable_execve().enable_file_syscalls().watch("/etc", "wa", "etc")
+        h.login("alice", ago(hours=5), until=ago(hours=1), host="203.0.113.7")
+        h.sudoers("alice ALL=(ALL:ALL) ALL")
+        h.sudoers_d("deploy", "%docker ALL=(ALL) NOPASSWD: /usr/bin/systemctl")
+        h.shadow("root", "$6$x$y").shadow("svc", "!").shadow("guest", "")
+        h.authorized_key("alice", "ssh-ed25519 AAAAC3Nz alice@laptop")
+        h.sshd_config(PermitRootLogin="yes", PasswordAuthentication="no")
+        # authorization-changing acts by alice in the window
+        h.file_change(1001, 0, "openat", "/etc/sudoers.d/deploy", ago(hours=3),
+                      euid=0, key="etc")
+        h.exec(1001, 0, ["gpasswd", "-a", "carol", "sudo"], "/usr/bin/gpasswd",
+               ago(hours=3), euid=0, comm="gpasswd")
+        h.write()
+        return root
+
+    def _run(self, root, flags, user="alice"):
+        argv = ["--data-root", str(root), "--format", "json",
+                "--facet", "authorization"]
+        if "--actor" not in flags:
+            argv += ["--user", user]
+        rc, out = self.cli(*argv, *flags)
+        self.assertEqual(rc, 0, out)
+        return json.loads(out)
+
+    def _all_cited(self, d):
+        self.assertTrue(d["evidence"])
+        self.assertTrue(all(e["records"] for e in d["evidence"]),
+                        "provenance lost: an authz artifact without a raw record")
+
+    def _kinds(self, d, kind):
+        return [e for e in d["finding"]["events"]
+                if (e.get("attrs") or {}).get("kind") == kind]
+
+    # -- AC-10: who is in a privileged group -- #
+    def test_ac10_privileged_group_membership(self):
+        d = self._run(self._host(), ["--actor", "any"])
+        self._all_cited(d)
+        pg = {(e.get("actor_name"), (e.get("attrs") or {}).get("group"))
+              for e in self._kinds(d, "priv_group")}
+        self.assertIn(("alice", "sudo"), pg)
+        self.assertIn(("bob", "docker"), pg)
+
+    # -- AC-11: locked / passwordless accounts -- #
+    def test_ac11_shadow_anomalies(self):
+        d = self._run(self._host(), ["--actor", "any"])
+        statuses = {e.get("actor_name"): (e.get("attrs") or {}).get("status")
+                    for e in self._kinds(d, "shadow")}
+        self.assertIn("locked", statuses.get("svc", ""))
+        self.assertIn("passwordless", statuses.get("guest", ""))
+
+    # -- AC-12: SSH authorized_key grant -- #
+    def test_ac12_authorized_key(self):
+        d = self._run(self._host(), [], user="alice")
+        self._all_cited(d)
+        self.assertTrue(self._kinds(d, "ssh_key"), "alice's authorized_key not surfaced")
+
+    # -- PV-10: what can the user sudo, and who else can escalate -- #
+    def test_pv10_sudoers_grants(self):
+        d = self._run(self._host(), ["--actor", "any"])
+        who = {e.get("actor_name") for e in self._kinds(d, "sudoers")}
+        self.assertIn("alice", who)   # direct grant
+        self.assertIn("bob", who)     # via %docker group grant expansion
+
+    # -- PV-11: did the user grant sudo / modify sudoers (act) -- #
+    def test_pv11_authorization_change_footprint(self):
+        d = self._run(self._host(), [], user="alice")
+        self._all_cited(d)
+        types = {e["type"] for e in d["finding"]["events"]}
+        self.assertTrue({"file_change", "exec"} & types,
+                        "no in-window authorization-change act captured")
+        self.assertIn("footprint", d["finding"]["summary"])
+
+    # -- IA-12: is SSH root login / password auth permitted -- #
+    def test_ia12_ssh_auth_policy(self):
+        d = self._run(self._host(), ["--actor", "any"])
+        pol = {(e.get("attrs") or {}).get("directive"):
+               (e.get("attrs") or {}).get("value")
+               for e in self._kinds(d, "ssh_policy")}
+        self.assertEqual(pol.get("PermitRootLogin"), "yes")
+        self.assertEqual(pol.get("PasswordAuthentication"), "no")
+
+    # -- soundness: no false "no locked accounts" when /etc/shadow is absent -- #
+    def test_missing_shadow_is_disclosed_not_a_false_negative(self):
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001, gid=1001)
+        h.group("sudo", 27, ["alice"])       # authz source present (group), no shadow
+        h.enable_execve()
+        h.write()
+        rc, out = self.cli("--facet", "gaps", "--user", "alice", "--format", "json",
+                           "--data-root", str(root))
+        blob = out.lower()
+        self.assertIn("shadow", blob)        # Gaps surfaces the missing shadow source
+
+    # -- clean bill: an unprivileged user with no authz change -- #
+    def test_unprivileged_user_evidenced_negative(self):
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001, gid=1001).passwd("nobody", 4000, gid=4000)
+        h.group("sudo", 27, ["alice"])
+        h.sudoers("alice ALL=(ALL) ALL")
+        h.shadow("nobody", "$6$z$z")
+        h.enable_execve().enable_file_syscalls()
+        h.write()
+        d = self._run(root, [], user="nobody")
+        self.assertEqual(d["finding"]["events"], [])
+        self.assertEqual(d["finding"]["confidence"], "certified")
+        self.assertIn("not an absolute claim", d["finding"]["summary"])
+
+    # -- conservation: an unparseable sudoers line is counted -- #
+    def test_conservation_counts_unparseable_sudoers(self):
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0)
+        h.sudoers("root ALL=(ALL) ALL")          # 1 good spec
+        h.sudoers("this is not a sudoers spec")  # 1 unparseable
+        h.write()
+        rc, out = self.cli("--coverage", "--format", "json", "--data-root", str(root))
+        cov = {s["source_id"]: s for s in json.loads(out)["coverage"]["sources"]}
+        self.assertEqual(cov["authz"]["unparseable"], 1)
+
+
 class TestProductionContract(Base):
     """The full production contract is honest: CERTIFIED == the wired core, and
     every CONTRACTED question names what it needs and is never silently answered."""
@@ -1840,7 +1983,7 @@ class TestProductionContract(Base):
     # questions that have a dedicated proving test in TestQueryLayer. This allowlist
     # is the guard: flipping any other question to CERTIFIED without a proving test
     # fails here (prevents silent over-certification).
-    _QUERY_CERTIFIED = {"AC-01", "AC-02", "AC-03", "AC-04", "AC-05", "AC-06", "AC-07", "EX-01", "EX-02", "EX-06", "EX-07", "EX-08", "EX-09", "EX-10", "FS-01", "FS-02", "FS-03", "FS-05", "FS-06", "FS-07", "FS-08", "FS-09", "FS-10", "IA-02", "IA-06", "NW-01", "NW-02", "NW-05", "NW-13", "PK-01", "PK-02", "PK-03", "PK-04", "PK-06", "PK-07", "PK-08", "PK-12", "PV-03", "PV-04", "PV-05", "PV-08", "SP-01", "SP-02", "SP-03", "SP-04", "SP-05", "SP-06", "SP-07", "SP-09", "SP-10", "SP-11", "SP-12", "SP-13", "SP-14", "SP-15", "TM-01", "TM-04", "TM-08", "TM-09", "TM-10", "TM-11", "TM-12"}
+    _QUERY_CERTIFIED = {"AC-01", "AC-02", "AC-03", "AC-04", "AC-05", "AC-06", "AC-07", "AC-10", "AC-11", "AC-12", "AC-13", "EX-01", "EX-02", "EX-06", "EX-07", "EX-08", "EX-09", "EX-10", "FS-01", "FS-02", "FS-03", "FS-05", "FS-06", "FS-07", "FS-08", "FS-09", "FS-10", "IA-02", "IA-06", "IA-12", "NW-01", "NW-02", "NW-05", "NW-13", "PK-01", "PK-02", "PK-03", "PK-04", "PK-06", "PK-07", "PK-08", "PK-12", "PV-03", "PV-04", "PV-05", "PV-08", "PV-10", "PV-11", "SP-01", "SP-02", "SP-03", "SP-04", "SP-05", "SP-06", "SP-07", "SP-09", "SP-10", "SP-11", "SP-12", "SP-13", "SP-14", "SP-15", "TM-01", "TM-04", "TM-08", "TM-09", "TM-10", "TM-11", "TM-12"}
 
     def test_certified_set_is_exactly_the_proven_set(self):
         from openpath.contract import PRODUCTION_CONTRACT, CatalogStatus
@@ -1934,6 +2077,9 @@ class TestDemoReadiness(Base):
         h.connect(1001, 0, "93.184.216.34", 443, ago(hours=2, minutes=53))
         h.systemd_unit("nginx.service", "/usr/sbin/nginx", enabled=True)
         h.cron_system("0 3 * * *", "root", "/usr/local/bin/backup.sh")
+        h.sudoers("aclaye ALL=(ALL) ALL")
+        h.shadow("root", "$6$x$y")
+        h.sshd_config(PermitRootLogin="prohibit-password")
         h.write()
         return root
 
