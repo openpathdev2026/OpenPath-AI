@@ -3492,6 +3492,44 @@ class TestDeployment(Base):
         self.assertFalse(checks["collectors"])
 
 
+class TestEvidencePackage(Base):
+    """Guards the evidence-package generator so it cannot silently rot: the
+    code-derived sections must reflect the real contract and collector set."""
+
+    def test_generator_code_derived_sections(self):
+        import scripts.gen_evidence_package as g
+        from openpath.contract import PRODUCTION_CONTRACT, contract_fingerprint
+        from openpath.sources import default_collectors
+        catalog = g.sec_catalog()
+        # Every contract question appears in the catalog section, with its rationale.
+        for q in PRODUCTION_CONTRACT:
+            self.assertIn(f"| {q.id} |", catalog)
+        sources = g.sec_sources()
+        for c in default_collectors():
+            self.assertIn(f"`{c.source_id}`", sources)
+        # The fingerprint is deterministic and surfaced.
+        self.assertRegex(contract_fingerprint(), r"^[0-9a-f]{12}$")
+
+    def test_latency_harness_never_fabricates(self):
+        # Each row is either a real measurement or an explicit not_measurable with a
+        # method -- never a made-up number.
+        import scripts.measure_capture_latency as mcl
+        from unittest import mock
+        # Cap the wait so a not-yet-observable marker doesn't stall the unit test;
+        # this bounds only the "wait for visibility" loop, not the measured stages.
+        with mock.patch.object(mcl, "_TIMEOUT", 0.3):
+            report = mcl.run()
+        self.assertTrue(report["rows"])
+        for r in report["rows"]:
+            self.assertIn(r["status"], ("measured", "not_measurable"))
+            if r["status"] == "measured":
+                self.assertIsInstance(r["seconds"], (int, float))
+                self.assertGreaterEqual(r["seconds"], 0)
+            else:
+                self.assertIsNone(r["seconds"])
+                self.assertTrue(r.get("method"), "not_measurable row lacks a method")
+
+
 class TestResilience(Base):
     """Failure-mode behavior a deployable tool must get right: a permission failure
     is disclosed (never a false negative), a re-run is idempotent, and a failed

@@ -184,7 +184,7 @@ remedied UNANSWERABLE without it:
 
 - 153 / 153 questions CERTIFIED (CONTRACTED 0).
 - 29 facets, 16 collectors, ~11k LOC, zero third-party dependencies (stdlib only).
-- 263 conformance tests green, including adversarial cases (wrong-user isolation,
+- 265 conformance tests green, including adversarial cases (wrong-user isolation,
   scoped-negative-not-absolute, provenance, path-boundary, contradictory flags,
   read-not-a-write, reply-tuple direction, bare-host disclosure, the full
   adversarial attribution corpus incl. post-logout screen/tmux, live-vs-snapshot
@@ -197,4 +197,17 @@ remedied UNANSWERABLE without it:
 python3 -m unittest discover -s tests -p 'test_*.py'   # full conformance suite
 openpath-ai --contract                                 # 153 CERTIFIED / 0 CONTRACTED
 openpath-ai --coverage --data-root <bundle>            # per-host readiness self-check
+openpath-ai --selfcheck                                # host-independent health probe
+python3 scripts/measure_capture_latency.py             # measured capture latency
+python3 scripts/gen_evidence_package.py                # regenerate PRODUCTION-EVIDENCE.md
 ```
+
+## Evidence package
+
+`docs/PRODUCTION-EVIDENCE.md` is the single, regenerable artifact for an
+independent production sign-off: the full question catalog with each question's
+certification rationale, the source inventory, the adversarial-corpus / real-host /
+container-lifecycle test results (executed at generation time), the measured
+capture latencies, the known limitations, and this trust matrix — all derived from
+the code or a live run, so it can be checked against the implementation rather than
+taken on faith. Regenerate with `python3 scripts/gen_evidence_package.py`.
