@@ -87,6 +87,12 @@ class SystemLifecycleFacet(Facet):
         f.events.sort(key=lambda e: e.ts)
 
         if not boots and not sysev:
+            # Without wtmp (the boot carrier) we cannot even assert "up throughout" --
+            # that is a determination, and the prereq gap makes this UNANSWERABLE.
+            if any(g.question == "System lifecycle" for g in f.gaps):
+                f.summary = ("Cannot determine the host's boot/reboot history: no "
+                             "wtmp boot accounting is present (see gaps).")
+                return f
             f.summary = (
                 "No boot or shutdown was recorded within the window; the host was "
                 "up throughout (it booted before the window) -- an evidenced "
