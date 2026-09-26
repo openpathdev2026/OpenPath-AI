@@ -5,7 +5,7 @@ The full set of user-facing forensic questions OpenPath commits to, each with a
 count is an output of the analysis, not a target. Certification is a property of
 a question, not a limit on which questions exist.
 
-**153 questions** — CERTIFIED 60, CONTRACTED 93.
+**153 questions** — CERTIFIED 65, CONTRACTED 88.
 
 - **CERTIFIED** — wired and proven end-to-end today (see `catalog.py` + the
   conformance suite). Complete *within the covered evidence scope*, never absolute.
@@ -38,14 +38,18 @@ a question, not a limit on which questions exist.
 | Q14 | What evidence supports what {user} did during the window? | `evidence` | auditd, wtmp, journal.sshd, auth, packages, btmp |
 | Q15 | What could OpenPath NOT determine about {user} in this window? | `gaps` | auditd, wtmp, btmp, journal.sshd, auth, packages |
 | AC-01 | Did {user} delete or remove any accounts (anti-forensics, or disabling a defender's account)? | `accounts` | auditd, auth, wtmp |
+| AC-02 | Did {user} alter an existing account's properties (login shell, home directory, UID, or primary group)? | `accounts` | auditd, auth, wtmp |
 | AC-03 | Did {user} set or change the password of any account? | `accounts` | auditd, auth |
+| AC-04 | Did {user} lock or unlock any account? | `accounts` | auditd, auth |
 | AC-05 | Did {user} add any account (including themselves) to a privileged group such as sudo, wheel, docker, or root? | `groups` | auditd, auth, wtmp |
+| AC-06 | Did {user} attempt an account or group change that failed or was denied? | `accounts` | auditd, auth |
 | AC-07 | When did {user} make each account/group change, relative to their login and to the incident? | `timeline` | auditd, auth, wtmp |
 | EX-01 | Did {user} run a specific command or binary (curl, wget, nc, base64, a named tool)? | `commands` | auditd(execve audit rule), auth |
 | EX-02 | What ordinary (non-sudo) commands did {user} run? | `commands` | auditd(execve audit rule), wtmp |
 | EX-06 | From what terminal/TTY did {user} run commands (interactive vs non-interactive)? | `commands` | auditd(execve audit rule), wtmp |
 | EX-07 | Did {user} execute binaries from suspicious/non-standard locations (/tmp, /dev/shm, home dirs)? | `commands` | auditd(execve audit rule), auth |
 | EX-08 | When did {user} run commands — first, last, and the execution timeline? | `commands` | auditd(execve audit rule), auth, wtmp |
+| EX-09 | Did {user}'s command executions succeed or fail (and which errored)? | `commands` | auditd(execve audit rule) |
 | EX-10 | What scripts or interpreted programs did {user} execute (python/bash/perl scripts)? | `commands` | auditd(execve audit rule), auth |
 | FS-01 | Did {user} modify sensitive system or authentication config files (/etc/passwd, /etc/shadow, /etc/sudoers(.d), /etc/ssh/sshd_config, /etc/pam.d, cron files)? | `files` | auditd(host-wide file-change rule), auditd(file watch/modify audit rule), wtmp |
 | FS-02 | Did {user} create or drop files in suspicious/transient locations (/tmp, /dev/shm, /var/tmp, web roots, another user's home)? | `files` | auditd(host-wide file-change rule), auditd(file watch/modify audit rule), wtmp |
@@ -64,6 +68,7 @@ a question, not a limit on which questions exist.
 | NW-13 | Can {user} be affirmatively cleared of network activity (an evidenced negative)? | `network` | auditd(connect audit rule), auditd(bind audit rule) |
 | PK-01 | What software changed on this host overall during the window, and when — regardless of who did it? | `packages` | packages |
 | PK-02 | When was a specific package (e.g. nginx) installed, upgraded, or removed on this host? | `packages` | packages |
+| PK-03 | What version was a package upgraded or downgraded from and to? | `packages` | packages |
 | PK-04 | Who installed or removed package X? | `packages` | auditd(execve audit rule), auth, packages |
 | PK-06 | Did {user} remove or purge any packages (possible defense evasion / removal of security tooling)? | `packages` | packages, auditd(execve audit rule), auth |
 | PK-07 | Was any package downgraded (a rollback to a potentially vulnerable version)? | `packages` | packages, auditd(execve audit rule), auth |
@@ -85,18 +90,14 @@ a question, not a limit on which questions exist.
 
 ## CONTRACTED (roadmap)
 
-### Needs: query/filter/pivot layer shipped (openpath/query.py); per-question certification test pending  (32)
+### Needs: query/filter/pivot layer shipped (openpath/query.py); per-question certification test pending  (27)
 
 | ID | Question | Facet | Blind spots |
 |----|----------|-------|-------------|
-| AC-02 | Did {user} alter an existing account's properties (login shell, home directory, UID, or primary group)? | accounts | auth has NO usermod parser — a non-sudo usermod is invisible on an auth-only host; the specific attribute changed is only in the raw op= ... |
-| AC-04 | Did {user} lock or unlock any account? | accounts | ACCT_LOCK/UNLOCK are auditd-only; auth-only sees a lock only if via sudo passwd -l/usermod -L; the account's CURRENT lock state (shadow !... |
-| AC-06 | Did {user} attempt an account or group change that failed or was denied? | accounts | auth._account/_group hardcode res='success' with no failed-account parser, so the only auth failure signal is a denied sudo of the admin ... |
 | AC-08 | Is the account {user} newly created within the window (and was it subsequently removed)? | accounts | An account created before the retention horizon appears pre-existing; a directory/LDAP account never shows local creation events yet exis... |
 | EX-03 | What did {user} run specifically via sudo? | commands | Strong PARTIAL on auth-only (via_sudo EXEC from COMMAND=; denied sudo reported FAILED, never run). sudo policy (who MAY escalate) not mod... |
 | EX-04 | What were the full command-line arguments (argv) of {user}'s commands, not just the binary? | commands | argv from EXECVE only; PROCTITLE (parsed-but-unused) is the omitted fallback, so truncated/self-rewritten argv degrades to exe/comm; env ... |
 | EX-05 | From which working directory (cwd) did {user} run each command? | commands | cwd needs the CWD record in the SYSCALL group; the auth-only synthesized sudo EXEC carries no cwd at all. |
-| EX-09 | Did {user}'s command executions succeed or fail (and which errored)? | commands | base_attrs.success carries only whether execve() itself succeeded (captured but not surfaced/filtered); the executed PROGRAM's exit code ... |
 | FS-12 | What sensitive files did {user} read or access, not modify (reading /etc/shadow, SSH keys, credential stores)? | files | Reads captured ONLY when a read-perm watch (-w -p r) fires, and even then typed FILE_CHANGE op=openat (read vs write not distinguished); ... |
 | IA-01 | How did {user} authenticate (password, public key, or another method)? | login | Method exists ONLY for SSH; console/tty/display-manager logins carry no method anywhere; wtmp-only host has none. Discloses 'sshd journal... |
 | IA-03 | Did {user} access the host locally (console) or remotely (network)? | sessions | Empty ut_host on some network logins can mask remote origin; physical console vs local pseudo-terminal not always separable. |
@@ -106,7 +107,6 @@ a question, not a limit on which questions exist.
 | IA-09 | Did {user} log in at unusual or off-hours times? | login | Login instants are CERTIFIED but 'unusual/off-hours' requires a behavioral baseline the tool does not hold — the anomaly verdict is analy... |
 | NW-03 | Did {user} exhibit anomalous outbound behavior — beaconing, connection fan-out (scanning), or rare/high ports? | network | Reclassified from the generated CERTIFIED: raw connects are certified but the shipped facet does NOT score beaconing/fan-out/rare-port pa... |
 | NW-07 | What local (UNIX-domain) socket connections did {user} make — e.g. to docker.sock or D-Bus/systemd sockets? | network | Only the socket path is recorded, not the identity of the process listening on the other end; abstract (leading-null) names render awkwar... |
-| PK-03 | What version was a package upgraded or downgraded from and to? | packages | dpkg carries version_from/to; dnf.rpm.log carries a single NEVRA string with NO structured prior version — recovering dnf 'from' versions... |
 | PK-05 | By what command, and via sudo or as root directly, did {user} change packages? | packages | Only the manager exec is captured, not shell wrappers/scripts; same 30-min correlation hazards; apt/term.log session context unread. |
 | PK-11 | Can we confirm {user} installed or changed NO software during the window (evidenced negative)? | packages | An install via an unmodeled manager or from source would not appear, so the negative is scoped to dnf(rpm)/dpkg; retention horizon disclo... |
 | PV-01 | How did {user} escalate — via sudo, su, or a direct root login? | privilege | 'sudo -i'/'sudo su -' surface as sudo with a shell cmd (nuance inferred from text); su-to-root vs su-to-other share tool='su' (target onl... |

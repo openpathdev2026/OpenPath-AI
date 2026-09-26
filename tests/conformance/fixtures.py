@@ -165,7 +165,7 @@ class HostBuilder:
     # -- auditd syscall events ---------------------------------------------- #
 
     def exec(self, auid, uid, argv, exe, at, cwd="/root", euid=None,
-             key="exec", comm=None, arch="x86_64"):
+             key="exec", comm=None, arch="x86_64", success="yes", exit_code=0):
         euid = uid if euid is None else euid
         comm = comm or (argv[0] if argv else "prog")
         sid = next(self._serial)
@@ -175,7 +175,7 @@ class HostBuilder:
         execno = 221 if arch == "aarch64" else SYS["execve"]
         self._audit.append(
             f"type=SYSCALL msg=audit({aid}): arch={archhex} syscall={execno} "
-            f"success=yes exit=0 ppid=1000 pid=3{sid} auid={auid} uid={uid} gid=0 "
+            f"success={success} exit={exit_code} ppid=1000 pid=3{sid} auid={auid} uid={uid} gid=0 "
             f"euid={euid} suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=pts0 ses=3 "
             f'comm="{comm}" exe="{exe}"{keyfield}')
         argfields = " ".join(f'a{i}="{a}"' for i, a in enumerate(argv))
@@ -268,6 +268,26 @@ class HostBuilder:
             f"type=USER_CHAUTHTOK msg=audit({aid}): pid=3{sid} uid=0 auid={auid} "
             f"ses=3 msg='op=PAM:chauthtok acct=\"{acct}\" id={uid} "
             f"exe=\"/usr/bin/passwd\" hostname=h addr=? terminal=pts/0 res={res}'")
+        return self
+
+    def usermod(self, auid, acct, uid, at, res="success"):
+        sid = next(self._serial)
+        aid = f"{_epoch_msec(at)}:{sid}"
+        self._audit.append(
+            f"type=USER_MGMT msg=audit({aid}): pid=3{sid} uid=0 auid={auid} ses=3 "
+            f"msg='op=modify-account acct=\"{acct}\" id={uid} exe=\"/usr/sbin/usermod\" "
+            f"hostname=h addr=? terminal=pts/0 res={res}'")
+        return self
+
+    def acct_lock(self, auid, acct, uid, at, lock=True, res="success"):
+        rtype = "ACCT_LOCK" if lock else "ACCT_UNLOCK"
+        op = "locked-account" if lock else "unlocked-account"
+        sid = next(self._serial)
+        aid = f"{_epoch_msec(at)}:{sid}"
+        self._audit.append(
+            f"type={rtype} msg=audit({aid}): pid=3{sid} uid=0 auid={auid} ses=3 "
+            f"msg='op={op} acct=\"{acct}\" id={uid} exe=\"/usr/sbin/usermod\" "
+            f"hostname=h addr=? terminal=pts/0 res={res}'")
         return self
 
     def add_group(self, auid, grp, gid, at, res="success"):
