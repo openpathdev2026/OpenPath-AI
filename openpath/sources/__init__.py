@@ -16,6 +16,7 @@ from openpath.sources.journal_sshd import SshdJournalCollector
 from openpath.sources.journald import GeneralJournaldCollector
 from openpath.sources.packages import PackageCollector
 from openpath.sources.persistence import PersistenceCollector
+from openpath.sources.pkgpolicy import PkgPolicyCollector
 from openpath.sources.wtmp import WtmpCollector
 
 
@@ -30,6 +31,7 @@ def default_collectors() -> List[Collector]:
         PersistenceCollector(),
         AuthzCollector(),
         GeneralJournaldCollector(),
+        PkgPolicyCollector(),
     ]
 
 
@@ -45,5 +47,6 @@ __all__ = [
     "PackageCollector",
     "PersistenceCollector",
     "AuthzCollector",
+    "PkgPolicyCollector",
     "default_collectors",
 ]

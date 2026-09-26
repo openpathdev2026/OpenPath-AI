@@ -896,7 +896,7 @@ class TestReadiness(Base):
         report = self._rd(self.fully_instrumented())
         # all substantive data questions answerable (aggregates not counted)
         self.assertEqual(report.answerable, report.data_total)
-        self.assertEqual(report.data_total, 13)
+        self.assertEqual(report.data_total, 14)
 
     def test_debian_host_blind_on_files_and_network_only(self):
         root = self.make_root()
@@ -2338,6 +2338,67 @@ class TestRemainingProjections(Base):
         self.assertTrue(d["finding"]["events"])
 
 
+class TestPackagePolicy(Base):
+    """Certifies the software supply-chain questions (PK-13 repo provenance,
+    PK-14 coverage, PK-15 version-locks, PK-16 signature policy) end-to-end through
+    the shipped CLI, cited."""
+
+    def _host(self):
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0)
+        h.dnf_conf(gpgcheck=True)
+        h.yum_repo("fedora",
+                   "https://download.fedoraproject.org/pub/fedora/linux/", gpgcheck=True)
+        h.yum_repo("rogue", "http://192.0.2.66/repo", gpgcheck=False)  # untrusted+unsigned
+        h.versionlock("openssl-0:3.0.0-1.fc40.*")
+        h.apt_source("deb http://evil.example.com/ubuntu focal main")  # untrusted
+        h.pkg_manager_log("var/log/pacman.log")                        # present, unparsed
+        h.pkg("Installed", "nginx-1.24.0-1.fc40.x86_64", ago(hours=2))
+        h.write()
+        return root
+
+    def _run(self):
+        rc, out = self.cli("--data-root", str(self._host()), "--format", "json",
+                           "--facet", "pkg_policy", "--user", "root")
+        self.assertEqual(rc, 0, out)
+        d = json.loads(out)
+        self.assertTrue(all(e["records"] for e in d["evidence"]), "provenance lost")
+        return d
+
+    def _kinds(self, d, kind):
+        return [e for e in d["finding"]["events"]
+                if (e.get("attrs") or {}).get("kind") == kind]
+
+    def test_pk13_repo_provenance_and_rogue(self):
+        d = self._run()
+        repos = self._kinds(d, "repo")
+        self.assertTrue(repos)
+        untrusted = [e for e in repos if (e.get("attrs") or {}).get("trusted") is False]
+        self.assertTrue(untrusted, "rogue/untrusted repo not flagged")
+        self.assertIn("192.0.2.66", json.dumps(d) + json.dumps(untrusted))
+
+    def test_pk14_coverage_self_report(self):
+        d = self._run()
+        cov = self._kinds(d, "coverage")
+        self.assertTrue(cov)
+        # discloses a present-but-unparsed manager (pacman)
+        self.assertIn("pacman", json.dumps(cov))
+
+    def test_pk15_versionlock(self):
+        d = self._run()
+        locks = self._kinds(d, "versionlock")
+        self.assertTrue(locks)
+        self.assertIn("openssl", json.dumps(locks))
+
+    def test_pk16_signature_policy(self):
+        d = self._run()
+        # the rogue repo has gpgcheck=0 -> unsigned packages accepted
+        repos = self._kinds(d, "repo")
+        self.assertTrue(any((e.get("attrs") or {}).get("gpgcheck") is False
+                            for e in repos))
+
+
 class TestProductionContract(Base):
     """The full production contract is honest: CERTIFIED == the wired core, and
     every CONTRACTED question names what it needs and is never silently answered."""
@@ -2346,7 +2407,7 @@ class TestProductionContract(Base):
     # questions that have a dedicated proving test in TestQueryLayer. This allowlist
     # is the guard: flipping any other question to CERTIFIED without a proving test
     # fails here (prevents silent over-certification).
-    _QUERY_CERTIFIED = {"AC-01", "AC-02", "AC-03", "AC-04", "AC-05", "AC-06", "AC-07", "AC-08", "AC-09", "AC-10", "AC-11", "AC-12", "AC-13", "EX-01", "EX-02", "EX-03", "EX-04", "EX-05", "EX-06", "EX-07", "EX-08", "EX-09", "EX-10", "FS-01", "FS-02", "FS-03", "FS-04", "FS-05", "FS-06", "FS-07", "FS-08", "FS-09", "FS-10", "FS-11", "IA-01", "IA-02", "IA-03", "IA-04", "IA-05", "IA-06", "IA-07", "IA-08", "IA-12", "NW-01", "NW-02", "NW-05", "NW-07", "NW-13", "PK-01", "PK-02", "PK-03", "PK-04", "PK-05", "PK-06", "PK-07", "PK-08", "PK-09", "PK-10", "PK-11", "PK-12", "PV-01", "PV-02", "PV-03", "PV-04", "PV-05", "PV-06", "PV-07", "PV-08", "PV-10", "PV-11", "SL-01", "SL-02", "SL-03", "SL-04", "SL-05", "SL-06", "SL-07", "SL-08", "SL-09", "SL-10", "SL-11", "SL-12", "SL-13", "SL-14", "SP-01", "SP-02", "SP-03", "SP-04", "SP-05", "SP-06", "SP-07", "SP-08", "SP-09", "SP-10", "SP-11", "SP-12", "SP-13", "SP-14", "SP-15", "SP-16", "TM-01", "TM-04", "TM-07", "TM-08", "TM-09", "TM-10", "TM-11", "TM-12"}
+    _QUERY_CERTIFIED = {"AC-01", "AC-02", "AC-03", "AC-04", "AC-05", "AC-06", "AC-07", "AC-08", "AC-09", "AC-10", "AC-11", "AC-12", "AC-13", "EX-01", "EX-02", "EX-03", "EX-04", "EX-05", "EX-06", "EX-07", "EX-08", "EX-09", "EX-10", "FS-01", "FS-02", "FS-03", "FS-04", "FS-05", "FS-06", "FS-07", "FS-08", "FS-09", "FS-10", "FS-11", "IA-01", "IA-02", "IA-03", "IA-04", "IA-05", "IA-06", "IA-07", "IA-08", "IA-12", "NW-01", "NW-02", "NW-05", "NW-07", "NW-13", "PK-01", "PK-02", "PK-03", "PK-04", "PK-05", "PK-06", "PK-07", "PK-08", "PK-09", "PK-10", "PK-11", "PK-12", "PK-13", "PK-14", "PK-15", "PK-16", "PV-01", "PV-02", "PV-03", "PV-04", "PV-05", "PV-06", "PV-07", "PV-08", "PV-10", "PV-11", "SL-01", "SL-02", "SL-03", "SL-04", "SL-05", "SL-06", "SL-07", "SL-08", "SL-09", "SL-10", "SL-11", "SL-12", "SL-13", "SL-14", "SP-01", "SP-02", "SP-03", "SP-04", "SP-05", "SP-06", "SP-07", "SP-08", "SP-09", "SP-10", "SP-11", "SP-12", "SP-13", "SP-14", "SP-15", "SP-16", "TM-01", "TM-04", "TM-07", "TM-08", "TM-09", "TM-10", "TM-11", "TM-12"}
 
     def test_certified_set_is_exactly_the_proven_set(self):
         from openpath.contract import PRODUCTION_CONTRACT, CatalogStatus

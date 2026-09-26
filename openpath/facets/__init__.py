@@ -21,6 +21,7 @@ from openpath.facets.meta import CoreFacet, EvidenceFacet, GapsFacet
 from openpath.facets.network import NetworkFacet
 from openpath.facets.packages import PackagesFacet
 from openpath.facets.persistence import PersistenceFacet
+from openpath.facets.pkgpolicy import PackagePolicyFacet
 from openpath.facets.privilege import (
     CommandsFacet,
     PrivilegeFacet,
@@ -55,8 +56,9 @@ FAMILIES: List[FamilySpec] = [
     FamilySpec(13, "persistence", "Persistence", PersistenceFacet),
     FamilySpec(14, "authorization", "Authorization", AuthorizationFacet),
     FamilySpec(15, "system_lifecycle", "System lifecycle", SystemLifecycleFacet),
-    FamilySpec(16, "evidence", "Evidence", EvidenceFacet),
-    FamilySpec(17, "gaps", "Gaps", GapsFacet),
+    FamilySpec(16, "pkg_policy", "Package policy", PackagePolicyFacet),
+    FamilySpec(17, "evidence", "Evidence", EvidenceFacet),
+    FamilySpec(18, "gaps", "Gaps", GapsFacet),
 ]
 
 _BY_NAME: Dict[str, FamilySpec] = {spec.name: spec for spec in FAMILIES}

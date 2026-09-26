@@ -178,6 +178,20 @@ _BY_FACET.setdefault(
         _LIFECYCLE_SPEC),
 )
 
+# Package policy / provenance is host-level (repos, version-locks, signature
+# policy, coverage), so NOT federated into per-user Core. Its state source alone
+# makes it answerable.
+_PKGPOLICY_SPEC = _S(certified=[["pkgpolicy"]], fatal=["pkgpolicy"])
+_BY_FACET.setdefault(
+    "pkg_policy",
+    CatalogQuestion(
+        "PK-13",
+        "From what repositories is software sourced, are any version-locked or "
+        "unsigned, and which package managers does OpenPath capture?",
+        "pkg_policy", ("pkgpolicy",), True,
+        _PKGPOLICY_SPEC),
+)
+
 
 def by_id(qid: str) -> CatalogQuestion:
     for q in CATALOG:

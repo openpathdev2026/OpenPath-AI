@@ -6,6 +6,17 @@ based on Keep a Changelog; dates are UTC.
 ## [Unreleased]
 
 ### Added
+- **Package-policy collector + facet (`openpath/sources/pkgpolicy.py`,
+  `openpath/facets/pkgpolicy.py`).** Answers the software supply-chain cluster from
+  on-host configuration: PK-13 configured repositories and any pointing at an
+  untrusted (non-distro) origin -- the rogue-repo signal; PK-15 version-locks/holds
+  (dnf versionlock, apt pins); PK-16 GPG-signature policy (`gpgcheck` global and
+  per-repo, flagging repos that accept unsigned packages); and PK-14 a coverage
+  self-report naming package managers present on the host that OpenPath does not yet
+  parse (yum/pacman/zypper/snap/flatpak). Host-level (not folded into per-user Core);
+  `EventType.PKG_POLICY`, each cited to its config file; UNANSWERABLE (never a
+  fabricated default) on a host with no package system. Four questions move
+  CONTRACTED -> CERTIFIED (127 total), proven in `TestPackagePolicy`.
 - **Five more existing-facet questions certified (123 total).** FS-11 (file
   changes with no interactive session behind them, via the unattributable-actor
   pivot); NW-07 (UNIX-domain socket connections such as `docker.sock`, via the

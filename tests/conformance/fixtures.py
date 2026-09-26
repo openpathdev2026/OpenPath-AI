@@ -447,6 +447,32 @@ class HostBuilder:
         self._persist["etc/rc.local"] = ["#!/bin/sh"] + list(lines) + ["exit 0"]
         return self
 
+    # -- package policy / provenance (repos / versionlock / gpg / coverage) -- #
+    def yum_repo(self, repo_id, baseurl, enabled=True, gpgcheck=True):
+        rel = f"etc/yum.repos.d/{repo_id}.repo"
+        self._persist_add(rel, f"[{repo_id}]")
+        self._persist_add(rel, f"name={repo_id}")
+        self._persist_add(rel, f"baseurl={baseurl}")
+        self._persist_add(rel, f"enabled={1 if enabled else 0}")
+        self._persist_add(rel, f"gpgcheck={1 if gpgcheck else 0}")
+        return self
+
+    def dnf_conf(self, gpgcheck=True):
+        self._persist_add("etc/dnf/dnf.conf", "[main]")
+        self._persist_add("etc/dnf/dnf.conf", f"gpgcheck={1 if gpgcheck else 0}")
+        return self
+
+    def versionlock(self, pkg):
+        return self._persist_add("etc/dnf/plugins/versionlock.list", pkg)
+
+    def apt_source(self, line):
+        return self._persist_add("etc/apt/sources.list", line)
+
+    def pkg_manager_log(self, rel):
+        """Touch a package-manager log OpenPath does not parse (PK-14 coverage)."""
+        self._persist.setdefault(rel, ["(present)"])
+        return self
+
     # -- general journal (system lifecycle) ---------------------------------- #
     def journal_msg(self, msg, at, unit="", ident="systemd"):
         usec = int(at.astimezone(timezone.utc).timestamp() * 1_000_000)

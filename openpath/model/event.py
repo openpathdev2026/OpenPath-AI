@@ -45,6 +45,12 @@ class EventType(enum.Enum):
     # Software
     PACKAGE_CHANGE = "package_change"  # install/remove/update
 
+    # Package configuration / provenance / policy (current-state inventory:
+    # configured repositories, version-locks/holds, GPG-signature policy, and which
+    # package managers OpenPath captures). Host-level; unattributed unless tied to a
+    # file-change act. Answers PK-13/14/15/16.
+    PKG_POLICY = "pkg_policy"
+
     # Persistence / scheduled execution (current-state inventory: cron, at,
     # systemd units/timers, linger, legacy startup). Unattributed unless the
     # artifact names a user (a per-user crontab) or a file-change event ties one.
@@ -158,6 +164,8 @@ class Event:
         if t is EventType.SYSTEM:
             return ("system", a.get("artifact") or a.get("unit") or a.get("kind")
                     or self.summary)
+        if t is EventType.PKG_POLICY:
+            return ("pkg-policy", a.get("artifact") or a.get("kind") or self.summary)
         if t is EventType.PRIVILEGE_ESCALATION:
             if a.get("cmd"):
                 return ("command", a.get("cmd"))

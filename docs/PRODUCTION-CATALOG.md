@@ -5,7 +5,7 @@ The full set of user-facing forensic questions OpenPath commits to, each with a
 count is an output of the analysis, not a target. Certification is a property of
 a question, not a limit on which questions exist.
 
-**153 questions** — CERTIFIED 123, CONTRACTED 30.
+**153 questions** — CERTIFIED 127, CONTRACTED 26.
 
 - **CERTIFIED** — wired and proven end-to-end today (see `catalog.py` + the
   conformance suite). Complete *within the covered evidence scope*, never absolute.
@@ -98,6 +98,10 @@ a question, not a limit on which questions exist.
 | PK-10 | Which package changes were NOT initiated by an interactive user (dnf-automatic, unattended-upgrades, cron)? | `packages` | packages, auditd(execve audit rule), auth |
 | PK-11 | Can we confirm {user} installed or changed NO software during the window (evidenced negative)? | `packages` | packages, auditd(execve audit rule), auth |
 | PK-12 | How far back does package-change history extend, and did OpenPath lose or fail to parse any package records? | `gaps` | packages |
+| PK-13 | From what repository or source was a package installed (trusted distro repo vs a rogue repo)? | `pkg_policy` | dnf history / repository collector, packages |
+| PK-14 | Does OpenPath capture software changes made through yum, zypper, pacman, snap, or flatpak — or only dnf(rpm) and dpkg? | `pkg_policy` | PackageCollector extension, packages |
+| PK-15 | Are any packages pinned, held, or version-locked (blocking updates / freezing a vulnerable version)? | `pkg_policy` | package-state collector |
+| PK-16 | Were any unsigned or untrusted-key packages installed (GPG signature verification)? | `pkg_policy` | signature/integrity collector, packages |
 | PV-01 | How did {user} escalate — via sudo, su, or a direct root login? | `privilege` | auditd, auth, wtmp, journal.sshd |
 | PV-02 | Did anyone log in directly as root, and from where? | `login` | wtmp, journal.sshd, auth |
 | PV-03 | Did {user} attempt to escalate and get denied or fail (wrong password, not in sudoers, command not allowed)? | `privilege` | auditd, auth |
@@ -181,12 +185,6 @@ a question, not a limit on which questions exist.
 |----|----------|-------|-------------|
 | EX-11 | What was the parent process and process ancestry of {user}'s commands (reconstruct the process tree)? | NEW:process_tree | fork/clone syscalls are NOT in the auditd syscall tables and no facet chains pid→ppid; PID reuse; kernel-thread/daemon roots have no logi... |
 
-### Needs: PackageCollector extension (/var/log/yum.log, /var/log/zypp/history, /var/log/pacman.log, snap/flatpak history; + apt/history.log + term.log for apt's native Requested-By)  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| PK-14 | Does OpenPath capture software changes made through yum, zypper, pacman, snap, or flatpak — or only dnf(rpm) and dpkg? | NEW:package_coverage | zypper/pacman/yum are in the exec-correlation NAME set but their TRANSACTION logs are unread, so an audited 'pacman -S' has no transactio... |
-
 ### Needs: auditd socket() syscall collection (record the socket type/protocol at creation) — within auditd's reach but not currently parsed or gated  (1)
 
 | ID | Question | Facet | Blind spots |
@@ -210,12 +208,6 @@ a question, not a limit on which questions exist.
 | ID | Question | Facet | Blind spots |
 |----|----------|-------|-------------|
 | TM-05 | Was unattributable activity caused by a scheduled task or service (cron/systemd timer/unit), and which one? | NEW:scheduled_tasks | auditd today marks such actions ROOT_NO_SESSION/DAEMON (correctly refusing to blame a human) but cannot name the job, schedule, or persis... |
-
-### Needs: dnf history / repository collector (/var/log/dnf.log, dnf history DB, /etc/yum.repos.d/*, /etc/apt/sources.list*, apt/history.log)  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| PK-13 | From what repository or source was a package installed (trusted distro repo vs a rogue repo)? | NEW:package_provenance | dnf.rpm.log/dpkg.log carry only NEVRA/version, never the repository or origin URL — a malicious package from a rogue repo is indistinguis... |
 
 ### Needs: faillock/faillog collector (/var/log/faillog, /var/run/faillock/*, pam_faillock/pam_tally2 threshold/deny-count/unlock-time)  (1)
 
@@ -265,23 +257,11 @@ a question, not a limit on which questions exist.
 |----|----------|-------|-------------|
 | NW-09 | What firewall / packet-filter rules are in place, and did {user} change them? | NEW:firewall | The network facet sees connect/bind syscalls only — never filter policy, chains, or whether a rule would allow/deny a flow; a rule-changi... |
 
-### Needs: package-state collector (apt-mark showhold, /etc/apt/preferences.d/*, dnf versionlock list, /etc/dnf/plugins/versionlock.list)  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| PK-15 | Are any packages pinned, held, or version-locked (blocking updates / freezing a vulnerable version)? | NEW:package_policy | Hold/lock state lives in configuration, not in the transaction logs read; OpenPath sees the resulting absence-of-upgrade only as 'no upgr... |
-
 ### Needs: shell-history collector (~/.bash_history, ~/.zsh_history, fish_history, incl. root; HISTTIMEFORMAT timestamps)  (1)
 
 | ID | Question | Facet | Blind spots |
 |----|----------|-------|-------------|
 | EX-12 | What commands did {user} type in their shell (interactive shell history)? | NEW:shell_history | History is untrusted (editable, HISTSIZE-bounded, often timestamp-less), misses builtins vs external; process-level execution via the com... |
-
-### Needs: signature/integrity collector (dnf.log GPG-check outcomes, rpm -V/--checksig, apt signature results, gpgcheck config)  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| PK-16 | Were any unsigned or untrusted-key packages installed (GPG signature verification)? | NEW:package_integrity | A package installed with --nogpgcheck / from an untrusted key looks identical to a signed one in the transaction log — sideloading/tamper... |
 
 ### Needs: web/proxy/cloud audit-log collector (nginx/apache access logs, forward-proxy logs, cloud provider audit trail)  (1)
 
