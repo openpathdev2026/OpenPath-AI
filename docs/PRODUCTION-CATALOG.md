@@ -5,7 +5,7 @@ The full set of user-facing forensic questions OpenPath commits to, each with a
 count is an output of the analysis, not a target. Certification is a property of
 a question, not a limit on which questions exist.
 
-**153 questions** — CERTIFIED 65, CONTRACTED 88.
+**153 questions** — CERTIFIED 71, CONTRACTED 82.
 
 - **CERTIFIED** — wired and proven end-to-end today (see `catalog.py` + the
   conformance suite). Complete *within the covered evidence scope*, never absolute.
@@ -78,8 +78,14 @@ a question, not a limit on which questions exist.
 | PV-04 | What exact commands did {user} run as root (full command lines)? | `commands` | auditd(execve audit rule), auth |
 | PV-05 | Did {user} obtain an interactive root shell (sudo -i, sudo su -, sudo bash)? | `root_activity` | auditd(execve audit rule), auth |
 | PV-08 | When did {user} first and last escalate, and how often (escalation timeline)? | `privilege` | auditd, auth, wtmp |
+| SP-02 | Did {user} modify any cron configuration files (user crontab, /etc/crontab, /etc/cron.d, /etc/cron.* run-parts)? | `files` | auditd(host-wide file-change rule), auditd(file watch/modify audit rule), wtmp |
 | SP-03 | Did {user} run crontab or at commands to schedule tasks (crontab -e, crontab -, at, batch)? | `commands` | auditd(execve audit rule), auth, wtmp |
+| SP-04 | Did {user} enable or disable any services or timers to persist across reboot (systemctl enable/disable, chkconfig, update-rc.d)? | `commands` | auditd(execve audit rule), auth, wtmp |
+| SP-05 | Did {user} create, modify, or drop-in a systemd unit (.service/.socket/.timer/.path or a drop-in under /etc/systemd/system, /run/systemd/system, or ~/.config/systemd/user)? | `files` | auditd(host-wide file-change rule), auditd(file watch/modify audit rule), wtmp |
 | SP-09 | Did {user} start, stop, or restart any service (systemctl start/stop/restart, or the service command)? | `commands` | auditd(execve audit rule), auth, wtmp |
+| SP-10 | Did {user} create transient units or scheduled one-off runs via systemd-run (--on-calendar / --scope)? | `commands` | auditd(execve audit rule), auth, wtmp |
+| SP-11 | Did {user} mask/unmask units or change the default boot target (systemctl mask/unmask, set-default, isolate)? | `commands` | auditd(execve audit rule), auth, wtmp |
+| SP-12 | Did {user} modify legacy startup files (/etc/rc.local, /etc/init.d, /etc/rc.d, upstart /etc/init) for boot persistence? | `files` | auditd(host-wide file-change rule), auditd(file watch/modify audit rule), wtmp |
 | TM-01 | Give me a full chronological timeline of everything {user} did in the window, in order. | `timeline` | auditd, wtmp, auth, packages, journal.sshd, btmp |
 | TM-04 | When did {user} first and last appear in the window, and how long were they active (dwell time)? | `timeline` | wtmp, auditd, auth, journal.sshd, packages, btmp |
 | TM-08 | What activity on this host cannot be attributed to any human (daemon/service, cron/boot-time, or unset loginuid)? | `core` | auditd, wtmp |
@@ -236,12 +242,6 @@ a question, not a limit on which questions exist.
 |----|----------|-------|-------------|
 | SP-16 | What persistence-related actions did {user} take immediately before and after the incident? | timeline | Only ACTS with a syscall/log footprint appear; state transitions (a unit becoming enabled, a timer's next fire) are not placeable without... |
 
-### Needs: cron collector to recover the resulting job content  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| SP-02 | Did {user} modify any cron configuration files (user crontab, /etc/crontab, /etc/cron.d, /etc/cron.* run-parts)? | files | FILE_CHANGE carries path+op only, never the new content, so the actual scheduled command is invisible; no auth fallback for file changes. |
-
 ### Needs: cron/at & systemd-timer collector to positively ATTRIBUTE unattended writes to a specific job (today disclosed only as unattributable)  (1)
 
 | ID | Question | Facet | Blind spots |
@@ -362,12 +362,6 @@ a question, not a limit on which questions exist.
 |----|----------|-------|-------------|
 | IA-10 | Did a login originate from a new, geographically unexpected, or known-malicious IP? | NEW:origin_reputation | Raw origin IPs are CERTIFIED as origins; the new/geo/malicious classification is entirely unmodeled; 24h window gives no baseline. |
 
-### Needs: init/startup-config collector to read script content and enumerate SysV run-level links  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| SP-12 | Did {user} modify legacy startup files (/etc/rc.local, /etc/init.d, /etc/rc.d, upstart /etc/init) for boot persistence? | files | Content of the modified script (injected command) not captured; run-level symlink graph (/etc/rc?.d) not enumerated; vendor init scripts ... |
-
 ### Needs: netflow / conntrack byte-accounting collector (nftables counters, /proc/net or ss byte stats, netflow/IPFIX, or forward-proxy transfer logs)  (1)
 
 | ID | Question | Facet | Blind spots |
@@ -440,12 +434,6 @@ a question, not a limit on which questions exist.
 |----|----------|-------|-------------|
 | SL-07 | Was the host offline or down during any part of the window (a blind interval where nothing could be recorded)? | NEW:system_lifecycle | Only the pre-first-boot interval is accounted (and only internally, to adjust gap math); between-reboot downtime is invisible; the adjust... |
 
-### Needs: systemd unit-state collector to confirm resulting enabled state and catch enablement done without systemctl  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| SP-04 | Did {user} enable or disable any services or timers to persist across reboot (systemctl enable/disable, chkconfig, update-rc.d)? | commands | execve confirms the command, not that it succeeded or that the unit is now enabled; enabling by hand-creating .wants/ symlinks bypasses s... |
-
 ### Needs: systemd-unit collector (systemctl list-timers; *.timer [Timer] OnCalendar/OnBootSec/Persistent; paired *.service ExecStart)  (1)
 
 | ID | Question | Facet | Blind spots |
@@ -463,24 +451,6 @@ a question, not a limit on which questions exist.
 | ID | Question | Facet | Blind spots |
 |----|----------|-------|-------------|
 | SP-13 | Did {user} install user-level systemd units (~/.config/systemd/user) or enable lingering to persist without an active login? | NEW:systemd_units | Home-directory unit dirs are typically unwatched by auditd so the file proxy usually sees nothing; linger and per-user enabled state unmo... |
-
-### Needs: systemd-unit collector to confirm resulting masked state / default target  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| SP-11 | Did {user} mask/unmask units or change the default boot target (systemctl mask/unmask, set-default, isolate)? | commands | Resulting state not confirmed here; masking by hand-linking a unit to /dev/null bypasses systemctl and needs a file watch or unit collector. |
-
-### Needs: systemd-unit collector to confirm the transient unit still exists / its schedule  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| SP-10 | Did {user} create transient units or scheduled one-off runs via systemd-run (--on-calendar / --scope)? | commands | No file artifact to cross-check; whether the transient unit is still scheduled/active is not confirmable; argv shows intent, not eventual... |
-
-### Needs: systemd-unit collector to read unit contents (ExecStart) and inventory  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| SP-05 | Did {user} create, modify, or drop-in a systemd unit (.service/.socket/.timer/.path or a drop-in under /etc/systemd/system, /run/systemd/system, or ~/.config/systemd/user)? | files | The unit's directives (ExecStart/ExecStartPre payload) are never captured — only path+op; vendor units under /usr/lib and per-user units ... |
 
 ### Needs: web/proxy/cloud audit-log collector (nginx/apache access logs, forward-proxy logs, cloud provider audit trail)  (1)
 

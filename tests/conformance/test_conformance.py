@@ -1509,6 +1509,12 @@ class TestQueryCertification(Base):
         ("AC-06", "accounts", ["--result", "failed"], "denied"),
         ("EX-09", "commands", ["--result", "failed"], "badcmd"),
         ("PK-03", "packages", ["--actor", "any", "--object", "curl"], "curl"),
+        ("SP-02", "files", ["--path", "/etc/cron.d/*"], "/etc/cron.d/evil"),
+        ("SP-05", "files", ["--path", "/etc/systemd/system/*"], "evil.service"),
+        ("SP-12", "files", ["--path", "/etc/rc.local"], "/etc/rc.local"),
+        ("SP-04", "commands", ["--contains", "enable"], "enable"),
+        ("SP-11", "commands", ["--contains", "mask"], "mask"),
+        ("SP-10", "commands", ["--contains", "systemd-run"], "systemd-run"),
     ]
 
     def _rich_host(self):
@@ -1536,6 +1542,13 @@ class TestQueryCertification(Base):
         h.add_user(1001, "denied", 1900, ago(hours=4), res="failed")     # failed account change
         h.exec(1001, 1001, ["badcmd"], "/usr/bin/badcmd", ago(hours=4), comm="badcmd", success="no")  # failed command
         h.dpkg("upgrade", "curl:amd64", "7.68.0", "7.81.0", ago(hours=4))  # version from->to
+        # persistence actions (captured as file creates / commands)
+        h.file_change(1001, 0, "creat", "/etc/cron.d/evil", ago(hours=4), euid=0)
+        h.file_change(1001, 0, "creat", "/etc/systemd/system/evil.service", ago(hours=4), euid=0)
+        h.file_change(1001, 0, "creat", "/etc/rc.local", ago(hours=4), euid=0)
+        h.exec(1001, 0, ["systemctl", "enable", "evil.service"], "/usr/bin/systemctl", ago(hours=4), euid=0, comm="systemctl")
+        h.exec(1001, 0, ["systemctl", "mask", "auditd"], "/usr/bin/systemctl", ago(hours=4), euid=0, comm="systemctl")
+        h.exec(1001, 0, ["systemd-run", "--on-calendar", "*:0/5", "/tmp/evil"], "/usr/bin/systemd-run", ago(hours=4), euid=0, comm="systemd-run")
         h.connect(1001, 1001, "10.0.0.9", 443, ago(hours=4))
         h.bind(1001, 0, "0.0.0.0", 4444, ago(hours=4))
         # Package changes + alice's audited dnf execs just before them, so the
@@ -1658,7 +1671,7 @@ class TestProductionContract(Base):
     # questions that have a dedicated proving test in TestQueryLayer. This allowlist
     # is the guard: flipping any other question to CERTIFIED without a proving test
     # fails here (prevents silent over-certification).
-    _QUERY_CERTIFIED = {"AC-01", "AC-02", "AC-03", "AC-04", "AC-05", "AC-06", "AC-07", "EX-01", "EX-02", "EX-06", "EX-07", "EX-08", "EX-09", "EX-10", "FS-01", "FS-02", "FS-03", "FS-05", "FS-06", "FS-07", "FS-08", "FS-09", "FS-10", "IA-02", "IA-06", "NW-01", "NW-02", "NW-05", "NW-13", "PK-01", "PK-02", "PK-03", "PK-04", "PK-06", "PK-07", "PK-08", "PK-12", "PV-03", "PV-04", "PV-05", "PV-08", "SP-03", "SP-09", "TM-01", "TM-04", "TM-08", "TM-09", "TM-10", "TM-11", "TM-12"}
+    _QUERY_CERTIFIED = {"AC-01", "AC-02", "AC-03", "AC-04", "AC-05", "AC-06", "AC-07", "EX-01", "EX-02", "EX-06", "EX-07", "EX-08", "EX-09", "EX-10", "FS-01", "FS-02", "FS-03", "FS-05", "FS-06", "FS-07", "FS-08", "FS-09", "FS-10", "IA-02", "IA-06", "NW-01", "NW-02", "NW-05", "NW-13", "PK-01", "PK-02", "PK-03", "PK-04", "PK-06", "PK-07", "PK-08", "PK-12", "PV-03", "PV-04", "PV-05", "PV-08", "SP-02", "SP-03", "SP-04", "SP-05", "SP-09", "SP-10", "SP-11", "SP-12", "TM-01", "TM-04", "TM-08", "TM-09", "TM-10", "TM-11", "TM-12"}
 
     def test_certified_set_is_exactly_the_proven_set(self):
         from openpath.contract import PRODUCTION_CONTRACT, CatalogStatus
