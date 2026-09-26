@@ -78,6 +78,10 @@ class EventType(enum.Enum):
 
     # Network
     NETWORK = "network"          # connect/bind/listen
+    # Network flow telemetry from conntrack/netflow: per-flow peers, transport,
+    # byte volume, direction -- distinct from the auditd connect/bind NETWORK events
+    # so it never alters the audited network answer.
+    NETFLOW = "netflow"
 
     # Anything a collector understood but that has no dedicated category yet.
     OTHER = "other"
@@ -152,6 +156,8 @@ class Event:
             return ("file", a.get("path") or "?")
         if t is EventType.FILE_READ:
             return ("file-read", a.get("path") or "?")
+        if t is EventType.NETFLOW:
+            return ("flow", a.get("artifact") or f"{a.get('peer')}:{a.get('dport')}")
         if t is EventType.NETWORK:
             ai = a.get("addr_info")
             if isinstance(ai, dict):

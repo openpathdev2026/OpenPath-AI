@@ -5,7 +5,7 @@ The full set of user-facing forensic questions OpenPath commits to, each with a
 count is an output of the analysis, not a target. Certification is a property of
 a question, not a limit on which questions exist.
 
-**153 questions** — CERTIFIED 141, CONTRACTED 12.
+**153 questions** — CERTIFIED 144, CONTRACTED 9.
 
 - **CERTIFIED** — wired and proven end-to-end today (see `catalog.py` + the
   conformance suite). Complete *within the covered evidence scope*, never absolute.
@@ -90,11 +90,14 @@ a question, not a limit on which questions exist.
 | NW-01 | What outbound network connections did {user} make, and to which destinations and ports? | `network` | auditd(connect audit rule) |
 | NW-02 | Did {user} connect to a specific known-bad IP, host, or port (IOC match)? | `network` | auditd(connect audit rule), auditd(bind audit rule) |
 | NW-03 | Did {user} exhibit anomalous outbound behavior — beaconing, connection fan-out (scanning), or rare/high ports? | `network` | auditd(connect audit rule) |
+| NW-04 | How much data did {user} transfer, and is there evidence of data exfiltration over a connection? | `netflow` | netflow / conntrack byte-accounting collector, auditd(connect audit rule) |
 | NW-05 | What ports or sockets did {user} bind or listen on — any new listeners or backdoors? | `network` | auditd(bind audit rule) |
+| NW-06 | What remote hosts established inbound connections to this system (source IPs of incoming flows)? | `netflow` | connection-tracking / inbound-flow collector, journal.sshd, auth, auditd(bind audit rule) |
 | NW-07 | What local (UNIX-domain) socket connections did {user} make — e.g. to docker.sock or D-Bus/systemd sockets? | `network` | auditd(connect audit rule) |
 | NW-09 | What firewall / packet-filter rules are in place, and did {user} change them? | `firewall` | nftables/iptables collector, auditd(execve audit rule) |
 | NW-11 | Did {user} change network interface, routing, VPN, or NetworkManager configuration? | `files` | NetworkManager/VPN collector, auditd(execve audit rule), auditd(host-wide file-change rule) |
 | NW-13 | Can {user} be affirmatively cleared of network activity (an evidenced negative)? | `network` | auditd(connect audit rule), auditd(bind audit rule) |
+| NW-14 | Over what protocol/transport did {user} communicate (TCP vs UDP, or a raw socket)? | `netflow` | auditd(connect audit rule) |
 | PK-01 | What software changed on this host overall during the window, and when — regardless of who did it? | `packages` | packages |
 | PK-02 | When was a specific package (e.g. nginx) installed, upgraded, or removed on this host? | `packages` | packages |
 | PK-03 | What version was a package upgraded or downgraded from and to? | `packages` | packages |
@@ -181,23 +184,11 @@ a question, not a limit on which questions exist.
 |----|----------|-------|-------------|
 | NW-08 | What DNS lookups / name-resolution queries did {user} perform (C2 domains, DNS tunneling)? | NEW:dns | Query names/answers unmodeled; only post-resolution IPs surface, and only if the resolved host was subsequently connected to; a connect t... |
 
-### Needs: auditd socket() syscall collection (record the socket type/protocol at creation) — within auditd's reach but not currently parsed or gated  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| NW-14 | Over what protocol/transport did {user} communicate (TCP vs UDP, or a raw socket)? | network | socket() is never collected, so SOCK_STREAM/DGRAM/RAW is unknown; only connect/bind + SOCKADDR (family+port) available and port is a hint... |
-
 ### Needs: connection-close events (auditd socket close/shutdown syscall collection, or wiring up the parsed-but-unused sshd Disconnect/Connection-closed parsing)  (1)
 
 | ID | Question | Facet | Blind spots |
 |----|----------|-------|-------------|
 | NW-15 | When did a given connection open and close, and how long was it held open (persistent channel)? | NEW:socketclose | The sshd _DISCONNECT_RE is defined but UNUSED so even SSH session-close is not emitted; close/shutdown syscalls not collected; only the o... |
-
-### Needs: connection-tracking / netflow / firewall-accept collector (conntrack table, nftables/iptables accept logging, netflow/IPFIX)  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| NW-06 | What remote hosts established inbound connections to this system (source IPs of incoming flows)? | NEW:conntrack | accept/accept4 peer identity is not reliably decoded and accept is not a gated instrument; SSH inbound origins ARE recoverable via journa... |
 
 ### Needs: file-integrity / content-baseline collector (AIDE/tripwire DB, content-capturing FIM, backup/snapshot diffs, or git/etckeeper history of /etc)  (1)
 
@@ -216,12 +207,6 @@ a question, not a limit on which questions exist.
 | ID | Question | Facet | Blind spots |
 |----|----------|-------|-------------|
 | IA-10 | Did a login originate from a new, geographically unexpected, or known-malicious IP? | NEW:origin_reputation | Raw origin IPs are CERTIFIED as origins; the new/geo/malicious classification is entirely unmodeled; 24h window gives no baseline. |
-
-### Needs: netflow / conntrack byte-accounting collector (nftables counters, /proc/net or ss byte stats, netflow/IPFIX, or forward-proxy transfer logs)  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| NW-04 | How much data did {user} transfer, and is there evidence of data exfiltration over a connection? | NEW:netflow | auditd records the connect syscall (that a channel opened and to where), never how many bytes flowed, in which direction, or for how long. |
 
 ### Needs: web/proxy/cloud audit-log collector (nginx/apache access logs, forward-proxy logs, cloud provider audit trail)  (1)
 

@@ -207,6 +207,15 @@ _BY_FACET.setdefault(
         "file_access", ("auditd",), True, _FILEACCESS_SPEC),
 )
 
+_NETFLOW_SPEC = _S(certified=[["conntrack"]], fatal=["conntrack"])
+_BY_FACET.setdefault(
+    "netflow",
+    CatalogQuestion(
+        "NW-06", "What remote hosts connected inbound, over what transport, and how "
+        "much data was transferred?",
+        "netflow", ("conntrack",), True, _NETFLOW_SPEC),
+)
+
 _FIREWALL_SPEC = _S(certified=[["firewall"]], fatal=["firewall"])
 _BY_FACET.setdefault(
     "firewall",

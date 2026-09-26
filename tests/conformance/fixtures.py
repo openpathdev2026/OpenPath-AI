@@ -515,6 +515,18 @@ class HostBuilder:
         self._persist["etc/nftables.conf"] = text.splitlines()
         return self
 
+    def conntrack(self, proto, osrc, odst, sport, dport, state="ESTABLISHED",
+                  nbytes=None):
+        """A tracked flow line (proc/net/nf_conntrack format). nbytes -> accounting."""
+        b = (f" bytes={nbytes}" if nbytes is not None else "")
+        rb = (f" bytes={nbytes}" if nbytes is not None else "")
+        line = (f"ipv4     2 {proto}      6 431999 {state} "
+                f"src={osrc} dst={odst} sport={sport} dport={dport}{b} "
+                f"src={odst} dst={osrc} sport={dport} dport={sport}{rb} "
+                f"[ASSURED] mark=0 use=1")
+        self._persist_add("proc/net/nf_conntrack", line)
+        return self
+
     # -- general journal (system lifecycle) ---------------------------------- #
     def journal_msg(self, msg, at, unit="", ident="systemd"):
         usec = int(at.astimezone(timezone.utc).timestamp() * 1_000_000)

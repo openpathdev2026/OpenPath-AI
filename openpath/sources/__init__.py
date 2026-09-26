@@ -11,6 +11,7 @@ from openpath.sources.auditd import AuditdCollector
 from openpath.sources.auth import SyslogAuthCollector
 from openpath.sources.authz import AuthzCollector
 from openpath.sources.base import CollectResult, Collector
+from openpath.sources.conntrack import ConntrackCollector
 from openpath.sources.firewall import FirewallCollector
 from openpath.sources.shell_history import ShellHistoryCollector
 from openpath.sources.btmp import BtmpCollector
@@ -36,6 +37,7 @@ def default_collectors() -> List[Collector]:
         PkgPolicyCollector(),
         ShellHistoryCollector(),
         FirewallCollector(),
+        ConntrackCollector(),
     ]
 
 
@@ -54,5 +56,6 @@ __all__ = [
     "PkgPolicyCollector",
     "ShellHistoryCollector",
     "FirewallCollector",
+    "ConntrackCollector",
     "default_collectors",
 ]

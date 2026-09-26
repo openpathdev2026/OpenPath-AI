@@ -6,6 +6,15 @@ based on Keep a Changelog; dates are UTC.
 ## [Unreleased]
 
 ### Added
+- **Conntrack / netflow (NW-04/06/14, 144 total).** A conntrack collector reads the
+  netfilter connection-tracking table (/proc/net/nf_conntrack or a saved dump) into
+  `EventType.NETFLOW`, and a host-level netflow facet answers NW-06 (remote hosts
+  that connected inbound), NW-14 (transport -- TCP/UDP/ICMP), and NW-04 (bytes
+  transferred, when nf_conntrack_acct is on; disclosed as unavailable otherwise).
+  The original 5-tuple is parsed explicitly so inbound/outbound direction is not
+  flipped by the reply tuple. Distinct from the auditd connect/bind NETWORK events,
+  so the audited network answer is unchanged.
+
 - **Sensitive-file reads (FS-12, 141 total).** A new `EventType.FILE_READ` and
   `file_access` facet answer "what sensitive files did {user} READ (not modify)?"
   from read-permission audit watches (`-w /etc/shadow -p r`). The auditd collector
