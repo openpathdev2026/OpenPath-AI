@@ -3720,6 +3720,51 @@ class TestRedTeamEscalation(Base):
         # record — an honest "by some means", not a fabricated sudo.
 
 
+class TestShippedPathAudit(Base):
+    """Phase-1A shipped-path audit: EVERY facet family must answer through the actual
+    CLI entrypoint (main()), not just a helper — and every answer it renders must be
+    cited or an honestly-disclosed gap. Runs the whole catalog surface through main()
+    in both JSON and text, so a facet that regresses to engine-only is caught."""
+
+    def test_every_facet_answers_through_the_cli(self):
+        from openpath.facets import FAMILIES
+        root = self.fully_instrumented()
+        failures = []
+        for spec in FAMILIES:
+            got = None
+            # Some facets are subject-scoped (--user), some host-level (--actor any).
+            # Try the subject form first, fall back to host-wide; one must work.
+            for actor_args in (["--user", "alice"], ["--actor", "any"]):
+                rc, out = self.cli("--data-root", str(root), "--facet", spec.name,
+                                   "--format", "json", *actor_args)
+                if rc == 0:
+                    got = out
+                    break
+            if got is None:
+                failures.append(f"{spec.name}: no CLI invocation succeeded")
+                continue
+            try:
+                d = json.loads(got)
+            except json.JSONDecodeError:
+                failures.append(f"{spec.name}: non-JSON from CLI")
+                continue
+            # Soundness through the shipped path: every rendered evidence object
+            # carries a raw record.
+            for e in d.get("evidence", []):
+                if not e.get("records"):
+                    failures.append(f"{spec.name}: uncited evidence via CLI")
+                    break
+            # And the text renderer must not crash for the same facet.
+            rc_t, _ = self.cli("--data-root", str(root), "--facet", spec.name,
+                               "--user", "alice", "--format", "text")
+            rc_t2, _ = (rc_t, None) if rc_t == 0 else self.cli(
+                "--data-root", str(root), "--facet", spec.name, "--actor", "any",
+                "--format", "text")
+            if rc_t != 0 and rc_t2 != 0:
+                failures.append(f"{spec.name}: text render failed via CLI")
+        self.assertEqual(failures, [], f"shipped-path failures: {failures}")
+
+
 class TestHistoricalIngestion(Base):
     """Deploy-at-day-0 reality: on a host with pre-existing retained + ROTATED logs,
     OpenPath answers historical questions immediately from those logs (no new activity
