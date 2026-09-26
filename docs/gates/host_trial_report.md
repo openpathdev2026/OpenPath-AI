@@ -1,6 +1,6 @@
 # D. 30-Day Host Trial — RED
 
-_Generated 2026-09-26T15:35:27.940255+00:00 by scripts/run_release_gates.py — computed from executed checks._
+_Generated 2026-09-26T15:48:39.126756+00:00 by scripts/run_release_gates.py — computed from executed checks._
 
 ## Executable checks
 
@@ -8,8 +8,8 @@ _Generated 2026-09-26T15:35:27.940255+00:00 by scripts/run_release_gates.py — 
 |-------|--------|----------|
 | burst completed without cycle errors | PASS | 40/40 cycles, 0 errors |
 | no collector failures | PASS | collector_failures=0 |
-| memory does not grow unbounded (no leak signature) | PASS | RSS drift 48 KiB, peak 24572 KiB |
-| bounded latency | PASS | latency {'min': 0.0186, 'max': 0.0309, 'mean': 0.0239} |
+| memory does not grow unbounded (no leak signature) | PASS | RSS drift 16 KiB, peak 24476 KiB |
+| bounded latency | PASS | latency {'min': 0.0195, 'max': 0.0468, 'mean': 0.026} |
 
 ## Unmet blockers (keep this gate RED — not fabricated)
 
@@ -19,8 +19,8 @@ _Generated 2026-09-26T15:35:27.940255+00:00 by scripts/run_release_gates.py — 
 
 ## Detail
 
-- latency s: {'min': 0.0186, 'max': 0.0309, 'mean': 0.0239}
-- peak RSS: 24572 KiB, drift 48 KiB
+- latency s: {'min': 0.0195, 'max': 0.0468, 'mean': 0.026}
+- peak RSS: 24476 KiB, drift 16 KiB
 - bounded burst; the 30-day continuous duration is the operator's run (schedule this harness under cron/systemd-timer, append output)
 
 **Status: RED.** Executable checks above are real evidence; the gate stays RED until the blocker's closing command is run and recorded.

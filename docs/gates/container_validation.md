@@ -1,6 +1,6 @@
 # C. Container Lifecycle Validation — RED
 
-_Generated 2026-09-26T15:35:27.940108+00:00 by scripts/run_release_gates.py — computed from executed checks._
+_Generated 2026-09-26T15:48:39.126647+00:00 by scripts/run_release_gates.py — computed from executed checks._
 
 ## Executable checks
 

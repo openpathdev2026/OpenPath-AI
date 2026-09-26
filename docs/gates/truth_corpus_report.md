@@ -1,6 +1,6 @@
 # A. Truth Corpus — GREEN
 
-_Generated 2026-09-26T15:35:27.939597+00:00 by scripts/run_release_gates.py — computed from executed checks._
+_Generated 2026-09-26T15:48:39.126346+00:00 by scripts/run_release_gates.py — computed from executed checks._
 
 ## Executable checks
 

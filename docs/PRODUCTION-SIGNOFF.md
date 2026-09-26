@@ -1,6 +1,6 @@
 # OpenPath-AI — Production Sign-Off Package (v1)
 
-_Generated 2026-09-26T11:54:41.057439+00:00 by `scripts/gen_signoff_package.py` — regenerate to re-verify._
+_Generated 2026-09-26T15:47:24.948708+00:00 by `scripts/gen_signoff_package.py` — regenerate to re-verify._
 
 Version `0.1.0` · frozen fingerprint `109709966e2b` · CERTIFIED 153 / CONTRACTED 0.
 
@@ -31,12 +31,12 @@ The lifecycle from an event happening to OpenPath being able to report it, with 
 |-------|--------|---------|--------|
 | audit_event_to_observable | not_measurable | — | auditctl absent -- the kernel audit subsystem is host-global and not namespaced, so it is unavailable in this (container) environment |
 | journal_event_to_observable | not_measurable | — | marker not visible within 20s (journald may be volatile/rate-limited here) |
-| analysis_latency | measured | 0.0391 | 40 events, 16 sources over / |
-| bundle_export_latency | measured | 0.0451 | bundle size 495 KiB |
-| stage:T_collect_and_parse | measured | 0.0270 |  |
-| stage:T_resolve_and_query | measured | 0.0307 |  |
-| stage:T_narration | measured | 0.0005 |  |
-| stage:T_total | measured | 0.0583 | 40 events, 16 sources |
+| analysis_latency | measured | 0.0251 | 40 events, 16 sources over / |
+| bundle_export_latency | measured | 0.0320 | bundle size 495 KiB |
+| stage:T_collect_and_parse | measured | 0.0207 |  |
+| stage:T_resolve_and_query | measured | 0.0245 |  |
+| stage:T_narration | measured | 0.0007 |  |
+| stage:T_total | measured | 0.0459 | 40 events, 16 sources |
 
 ### Freshness SLA (the commitment)
 
@@ -57,7 +57,7 @@ _Measured analysis and bundle-export times on this host are sub-second, well wit
 The framework for earning production *trust*: compare OpenPath's answers to a ground truth an investigator established **independently** (before seeing OpenPath's answer). `scripts/truth_corpus.py` runs the shipped CLI per case against a host/bundle and reports per-case PASS/MISMATCH plus aggregate false-negative / false-positive / misattribution counts; it exits non-zero on any mismatch (CI-gateable).
 
 - **Schema + worked examples:** `tests/corpus/example_ground_truth.json` and `tests/corpus/scenarios_ground_truth.json` — the latter covers the **ten canonical investigation scenarios** (SSH login, sudo escalation, sudo su, user creation, group modification, package install, cron persistence, file modification, network activity, logout), enacted by `tests/corpus/build_scenario_host.py` and checked 10/10 against independently-authored ground truth.
-- **Framework is not a rubber stamp:** ✅ framework self-tests: 6/6 passed — it is tested to DETECT both a false-negative claim (OpenPath missed real activity) and a false-positive claim (OpenPath over-reported), on the example and scenario hosts alike.
+- **Framework is not a rubber stamp:** ✅ framework self-tests: 7/7 passed — it is tested to DETECT both a false-negative claim (OpenPath missed real activity) and a false-positive claim (OpenPath over-reported), on the example and scenario hosts alike.
 - **Status:** framework complete, runnable, and exercised over the ten scenarios on a synthetic host; the *populated* corpus (a real host, ~30 days of usage, human-authored ground truth) is an operator activity — the last mile of trust, tracked in the risk register and Go/No-Go below.
 
 

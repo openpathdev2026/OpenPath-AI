@@ -184,7 +184,7 @@ remedied UNANSWERABLE without it:
 
 - 153 / 153 questions CERTIFIED (CONTRACTED 0).
 - 29 facets, 16 collectors, ~11k LOC, zero third-party dependencies (stdlib only).
-- 272 conformance tests green, including adversarial cases (wrong-user isolation,
+- 296 conformance tests green, including adversarial cases (wrong-user isolation,
   scoped-negative-not-absolute, provenance, path-boundary, contradictory flags,
   read-not-a-write, reply-tuple direction, bare-host disclosure, the full
   adversarial attribution corpus incl. post-logout screen/tmux, live-vs-snapshot

@@ -1,6 +1,6 @@
 # OpenPath-AI — Architecture Trace
 
-_Generated 2026-09-26T11:54:40.838376+00:00 by `scripts/gen_architecture_trace.py` — regenerate to re-verify._
+_Generated 2026-09-26T15:47:04.250438+00:00 by `scripts/gen_architecture_trace.py` — regenerate to re-verify._
 
 Walk any user-visible answer back to the raw evidence it rests on:
 

@@ -1,6 +1,6 @@
 # OpenPath v1 — Production Sign-Off (release gates)
 
-_Generated 2026-09-26T15:35:27.940460+00:00 — computed by scripts/run_release_gates.py, not declared._
+_Generated 2026-09-26T15:48:39.126920+00:00 — computed by scripts/run_release_gates.py, not declared._
 
 **Verdict: NOT READY.** 2/5 gates GREEN.
 

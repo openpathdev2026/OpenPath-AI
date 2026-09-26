@@ -1,6 +1,6 @@
 # OpenPath-AI — Production-readiness evidence package
 
-_Generated 2026-09-26T10:20:31.215194+00:00 by `scripts/gen_evidence_package.py` — regenerate to re-verify._
+_Generated 2026-09-26T15:47:04.325777+00:00 by `scripts/gen_evidence_package.py` — regenerate to re-verify._
 
 Version `0.1.0` · contract fingerprint `109709966e2b` · CERTIFIED 153 / CONTRACTED 0.
 
@@ -241,14 +241,14 @@ Escalation vs direct-root-login vs daemon classification.
 
 ## 4. Capture-latency measurements
 
-Measured on this host at 2026-09-26T10:20:51.412843+00:00 (euid 0). OpenPath's own rule applies to its self-measurement: **measured or disclosed, never fabricated.** A `not_measurable` row names the exact method to measure it on a suitable (e.g. auditd-instrumented, non-container) host.
+Measured on this host at 2026-09-26T15:47:24.510276+00:00 (euid 0). OpenPath's own rule applies to its self-measurement: **measured or disclosed, never fabricated.** A `not_measurable` row names the exact method to measure it on a suitable (e.g. auditd-instrumented, non-container) host.
 
 | stage | status | seconds | detail / method |
 |-------|--------|---------|-----------------|
 | audit_event_to_observable | not_measurable | — | auditctl absent -- the kernel audit subsystem is host-global and not namespaced, so it is unavailable in this (container) environment — method: with auditd: `auditctl -w <tmpfile> -p wa -k lat`; touch the file; poll /var/log/audit/audit.log for the SYSCALL record; report elapsed |
 | journal_event_to_observable | not_measurable | — | marker not visible within 20s (journald may be volatile/rate-limited here) — method: emit `logger -t <tag> <marker>`; poll `journalctl -t <tag> -o json` until the marker appears; report the elapsed time |
-| analysis_latency | measured | 0.0335 | 40 events, 16 sources over / |
-| bundle_export_latency | measured | 0.0453 | bundle size 495 KiB |
+| analysis_latency | measured | 0.0404 | 40 events, 16 sources over / |
+| bundle_export_latency | measured | 0.0396 | bundle size 495 KiB |
 
 Reproduce: `python3 scripts/measure_capture_latency.py`. On a live host every stage is bounded by the source's own write latency; on a bundle every stage is bounded by the stamped `captured-at` instant.
 
@@ -352,4 +352,4 @@ Reproduced from `docs/PRODUCTION-READINESS.md` (single source of truth); each ro
 
 ## Shipped-path verification
 
-Certification/answer assertions drive the shipped CLI entrypoint `openpath.cli:main` via the `self.cli(...)` helper — **47 call sites** in the conformance suite (grep `self.cli(` in `tests/conformance/test_conformance.py`). `main()` is the same function `pyproject.toml` binds to the `openpath-ai` console script, so a green suite exercises the code a user runs, not a test-only shortcut. A small number of attribution checks additionally call internal helpers (`classify_root_action`) to assert classification directly; those are labelled and are in addition to, not instead of, the CLI path.
+Certification/answer assertions drive the shipped CLI entrypoint `openpath.cli:main` via the `self.cli(...)` helper — **53 call sites** in the conformance suite (grep `self.cli(` in `tests/conformance/test_conformance.py`). `main()` is the same function `pyproject.toml` binds to the `openpath-ai` console script, so a green suite exercises the code a user runs, not a test-only shortcut. A small number of attribution checks additionally call internal helpers (`classify_root_action`) to assert classification directly; those are labelled and are in addition to, not instead of, the CLI path.
