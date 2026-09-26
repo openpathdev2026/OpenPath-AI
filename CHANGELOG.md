@@ -6,6 +6,13 @@ based on Keep a Changelog; dates are UTC.
 ## [Unreleased]
 
 ### Added
+- **Non-SSH authentication and account lockout (140 total).** The general journald
+  collector now emits, from the journal, non-SSH PAM authentication (IA-11 -- a
+  ``session opened`` / ``authentication`` line for a service other than sshd, e.g.
+  cockpit / login / gdm / VPN) and account-lockout / faillock trips (PV-12), each
+  attributed to the named user and cited. The login facet surfaces both (an sshd
+  line is left to the dedicated sshd collector, proven not double-reported).
+
 - **Scope, session-window, and visibility questions (138 total).** FS-14: the
   files facet flags modifications outside the subject's home scope (system dirs,
   another user's home), disclosed as a path heuristic (exact ownership needs a

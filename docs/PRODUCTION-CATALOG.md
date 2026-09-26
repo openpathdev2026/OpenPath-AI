@@ -5,7 +5,7 @@ The full set of user-facing forensic questions OpenPath commits to, each with a
 count is an output of the analysis, not a target. Certification is a property of
 a question, not a limit on which questions exist.
 
-**153 questions** — CERTIFIED 138, CONTRACTED 15.
+**153 questions** — CERTIFIED 140, CONTRACTED 13.
 
 - **CERTIFIED** — wired and proven end-to-end today (see `catalog.py` + the
   conformance suite). Complete *within the covered evidence scope*, never absolute.
@@ -84,6 +84,7 @@ a question, not a limit on which questions exist.
 | IA-07 | Which remote IPs/hosts connected and authenticated to this host? | `login` | wtmp, journal.sshd, auth, btmp |
 | IA-08 | Were there brute-force or password-spraying attempts against the host or {user}? | `login` | btmp, journal.sshd, auth, wtmp |
 | IA-09 | Did {user} log in at unusual or off-hours times? | `login` | wtmp, journal.sshd, auth |
+| IA-11 | Did authentication occur to a non-SSH service (VPN, display manager, cockpit, or other PAM service)? | `login` | general (non-sshd) journald collector, wtmp |
 | IA-12 | Is SSH root login or password authentication even permitted on this host (auth policy)? | `authorization` | sshd config collector, journal.sshd, auth |
 | NW-01 | What outbound network connections did {user} make, and to which destinations and ports? | `network` | auditd(connect audit rule) |
 | NW-02 | Did {user} connect to a specific known-bad IP, host, or port (IOC match)? | `network` | auditd(connect audit rule), auditd(bind audit rule) |
@@ -120,6 +121,7 @@ a question, not a limit on which questions exist.
 | PV-09 | Did {user} gain root by means other than sudo/su — a setuid binary, an exploit, or an LPE? | `root_activity` | auditd(execve audit rule) |
 | PV-10 | What is {user} permitted to do via sudo, and who else is allowed to escalate on this host (sudoers policy)? | `authorization` | sudoers collector, auditd, auth |
 | PV-11 | Did someone grant {user} sudo rights or modify the sudoers policy (privilege persistence)? | `authorization` | sudoers collector, auditd(host-wide file-change rule), auth |
+| PV-12 | Was {user}'s account locked out, or did failed escalations trip a faillock/pam_tally threshold? | `login` | faillock/faillog collector, btmp, auditd, auth |
 | SL-01 | When did this host last boot / come up? | `system_lifecycle` | wtmp, auditd |
 | SL-02 | How many times did the host reboot during the window, and how frequently? | `system_lifecycle` | wtmp |
 | SL-03 | Did a reboot terminate {user}'s active login session, and at what time? | `sessions` | wtmp |
@@ -197,12 +199,6 @@ a question, not a limit on which questions exist.
 |----|----------|-------|-------------|
 | NW-06 | What remote hosts established inbound connections to this system (source IPs of incoming flows)? | NEW:conntrack | accept/accept4 peer identity is not reliably decoded and accept is not a gated instrument; SSH inbound origins ARE recoverable via journa... |
 
-### Needs: faillock/faillog collector (/var/log/faillog, /var/run/faillock/*, pam_faillock/pam_tally2 threshold/deny-count/unlock-time)  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| PV-12 | Was {user}'s account locked out, or did failed escalations trip a faillock/pam_tally threshold? | NEW:faillock | btmp/auditd/auth give failed ATTEMPTS and timing but never the lockout decision, threshold, or reset; cannot tell an operator-cleared loc... |
-
 ### Needs: file-integrity / content-baseline collector (AIDE/tripwire DB, content-capturing FIM, backup/snapshot diffs, or git/etckeeper history of /etc)  (1)
 
 | ID | Question | Facet | Blind spots |
@@ -214,12 +210,6 @@ a question, not a limit on which questions exist.
 | ID | Question | Facet | Blind spots |
 |----|----------|-------|-------------|
 | NW-10 | Were {user}'s connections (or an attacker's) blocked or dropped by the firewall? | NEW:firewall | Syscall-layer success is not network-layer success — a connect syscall observed in auditd does not mean the packet was delivered; dropped... |
-
-### Needs: general (non-sshd) journald collector (+ NetworkManager/VPN collectors)  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| IA-11 | Did authentication occur to a non-SSH service (VPN, display manager, cockpit, or other PAM service)? | NEW:general_journald | Only the sshd slice + wtmp/btmp/auth modeled; VPN/WireGuard/cockpit/GDM auth invisible except a resulting wtmp session with no service/me... |
 
 ### Needs: geo/threat-intel enrichment + historical login baseline store (and cloud/web/proxy ingestion for access that never hits a local login carrier)  (1)
 

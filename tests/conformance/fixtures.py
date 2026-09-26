@@ -539,6 +539,18 @@ class HostBuilder:
     def boot_target(self, at, mode="Rescue Mode"):
         return self.journal_msg(f"Reached target {mode}.", at, ident="systemd")
 
+    def pam_auth(self, user, service, at):
+        """A non-SSH PAM authentication (IA-11), e.g. service='cockpit'/'login'/'gdm'."""
+        return self.journal_msg(
+            f"pam_unix({service}:session): session opened for user {user} by (uid=0)",
+            at, ident=service)
+
+    def faillock(self, user, at):
+        """An account lockout / faillock trip (PV-12)."""
+        return self.journal_msg(
+            f"pam_faillock(login:auth): Consecutive login failures for user {user} "
+            f"account temporarily locked", at, ident="login")
+
     # -- authorization state (sudoers / shadow / ssh keys / ssh policy) ------ #
     # (reuses the generic state-file accumulator flushed in write())
     def sudoers(self, line):

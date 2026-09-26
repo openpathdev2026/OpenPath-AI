@@ -55,6 +55,17 @@ _PATTERNS: List[Tuple[str, "re.Pattern", Optional[str]]] = [
     ("service_stop", re.compile(r"Stopped (?P<d>.+?)\.?$"), "d"),
 ]
 
+# Non-SSH authentication (IA-11) and account lockout (PV-12) from the journal.
+_PAM_SESSION = re.compile(
+    r"pam_unix\((?P<svc>[\w-]+):session\): session opened for user (?P<user>[\w.-]+)")
+_PAM_AUTH = re.compile(
+    r"pam_unix\((?P<svc>[\w-]+):auth\): authentication (?P<res>success|failure).*?"
+    r"user=(?P<user>[\w.-]+)")
+_FAILLOCK = re.compile(
+    r"pam_faillock.*?user[= ](?P<user>[\w.-]+)|Consecutive login failures for user "
+    r"(?P<user2>[\w.-]+)", re.I)
+_SSH_SERVICES = {"sshd", "ssh"}   # covered by the dedicated sshd collector
+
 
 class GeneralJournaldCollector(Collector):
     source_id = "journald"
@@ -106,6 +117,35 @@ class GeneralJournaldCollector(Collector):
     def _interpret(self, entry, msg, ts, loc, idx) -> Optional[Event]:
         unit = entry.get("_SYSTEMD_UNIT") or entry.get("UNIT") or ""
         ident = entry.get("SYSLOG_IDENTIFIER") or ""
+        locator = f"{loc}#{idx}"
+        raw0 = f"{ts.isoformat()} {ident or unit or 'systemd'}: {msg}"[:200]
+
+        # -- authentication / lockout (IA-11 / PV-12) -- #
+        mf = _FAILLOCK.search(msg)
+        if mf:
+            user = mf.group("user") or mf.group("user2")
+            return Event(
+                ts=ts, type=EventType.SYSTEM, source_id=self.source_id,
+                summary=f"account lockout / faillock event"
+                        + (f" for {user}" if user else ""),
+                actor_name=user,
+                attrs={"kind": "faillock", "artifact": user or "faillock",
+                       "user": user},
+                citations=[Citation(self.source_id, locator, raw0)])
+        for rx in (_PAM_SESSION, _PAM_AUTH):
+            m = rx.search(msg)
+            if m and m.group("svc") not in _SSH_SERVICES:
+                svc = m.group("svc")
+                user = m.group("user")
+                res = m.groupdict().get("res") or "opened"
+                return Event(
+                    ts=ts, type=EventType.SYSTEM, source_id=self.source_id,
+                    summary=f"non-SSH authentication to '{svc}' for {user} ({res})",
+                    actor_name=user,
+                    attrs={"kind": "pam_auth", "artifact": svc, "service": svc,
+                           "user": user, "result": res},
+                    citations=[Citation(self.source_id, locator, raw0)])
+
         for kind, rx, grp in _PATTERNS:
             m = rx.search(msg)
             if not m:

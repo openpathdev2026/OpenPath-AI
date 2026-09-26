@@ -131,7 +131,12 @@ class LoginFacet(Facet):
         # A failed SSH login is recorded in both btmp and auth.log/journal; merge
         # them so the same attempt is not counted twice.
         failed = _merge_failed(failed_ssh + btmp)
-        f.events = sorted(sessions + ssh + btmp, key=lambda e: e.ts)
+        # IA-11 (non-SSH PAM auth) and PV-12 (account lockout / faillock), from the
+        # general journal. Both are authentication facts for this subject.
+        sysev = ctx.subject_events([EventType.SYSTEM])
+        pam = [e for e in sysev if e.attrs.get("kind") == "pam_auth"]
+        locks = [e for e in sysev if e.attrs.get("kind") == "faillock"]
+        f.events = sorted(sessions + ssh + btmp + pam + locks, key=lambda e: e.ts)
 
         journal = ctx.ledger.get("journal.sshd")
         if journal is None or not journal.usable:
@@ -151,7 +156,7 @@ class LoginFacet(Facet):
         fail_origins = sorted({(e.attrs.get("ip") or e.attrs.get("origin"))
                                for e in failed} - {None})
 
-        if not login_events and not failed:
+        if not login_events and not failed and not pam and not locks:
             if has_success_source:
                 f.summary = (
                     f"No logins for {ctx.subject.username} in "
@@ -161,17 +166,26 @@ class LoginFacet(Facet):
                              f"{ctx.subject.username} logged in (see gaps).")
             return f
 
+        pam_svcs = sorted({e.attrs.get("service") for e in pam
+                           if e.attrs.get("service")})
         # Lead with the successful-login answer (or its absence), then failures.
         if login_events:
             head = (f"{ctx.subject.username} logged in {len(login_events)} time(s)"
                     + (f", first at {first.ts.isoformat()}" if first else "")
                     + (f"; origins: {', '.join(origins)}" if origins else ""))
+        elif pam:
+            head = (f"{ctx.subject.username} authenticated to non-SSH service(s) "
+                    f"{', '.join(pam_svcs)} (no SSH/console login recorded)")
         elif has_success_source:
             head = f"{ctx.subject.username} had no successful logins"
         else:
             head = (f"successful logins for {ctx.subject.username} cannot be "
                     f"confirmed (see gaps)")
         tail = ""
+        if pam and login_events:
+            tail += f"; also authenticated to non-SSH {', '.join(pam_svcs)}"
+        if locks:
+            tail += f"; {len(locks)} account-lockout/faillock event(s)"
         if failed:
             tail = (f"; {len(failed)} failed attempt(s)"
                     + (f" from {', '.join(fail_origins)}" if fail_origins else ""))
