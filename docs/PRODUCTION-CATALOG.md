@@ -5,7 +5,7 @@ The full set of user-facing forensic questions OpenPath commits to, each with a
 count is an output of the analysis, not a target. Certification is a property of
 a question, not a limit on which questions exist.
 
-**153 questions** — CERTIFIED 46, CONTRACTED 107.
+**153 questions** — CERTIFIED 60, CONTRACTED 93.
 
 - **CERTIFIED** — wired and proven end-to-end today (see `catalog.py` + the
   conformance suite). Complete *within the covered evidence scope*, never absolute.
@@ -40,10 +40,12 @@ a question, not a limit on which questions exist.
 | AC-01 | Did {user} delete or remove any accounts (anti-forensics, or disabling a defender's account)? | `accounts` | auditd, auth, wtmp |
 | AC-03 | Did {user} set or change the password of any account? | `accounts` | auditd, auth |
 | AC-05 | Did {user} add any account (including themselves) to a privileged group such as sudo, wheel, docker, or root? | `groups` | auditd, auth, wtmp |
+| AC-07 | When did {user} make each account/group change, relative to their login and to the incident? | `timeline` | auditd, auth, wtmp |
 | EX-01 | Did {user} run a specific command or binary (curl, wget, nc, base64, a named tool)? | `commands` | auditd(execve audit rule), auth |
 | EX-02 | What ordinary (non-sudo) commands did {user} run? | `commands` | auditd(execve audit rule), wtmp |
 | EX-06 | From what terminal/TTY did {user} run commands (interactive vs non-interactive)? | `commands` | auditd(execve audit rule), wtmp |
 | EX-07 | Did {user} execute binaries from suspicious/non-standard locations (/tmp, /dev/shm, home dirs)? | `commands` | auditd(execve audit rule), auth |
+| EX-08 | When did {user} run commands — first, last, and the execution timeline? | `commands` | auditd(execve audit rule), auth, wtmp |
 | EX-10 | What scripts or interpreted programs did {user} execute (python/bash/perl scripts)? | `commands` | auditd(execve audit rule), auth |
 | FS-01 | Did {user} modify sensitive system or authentication config files (/etc/passwd, /etc/shadow, /etc/sudoers(.d), /etc/ssh/sshd_config, /etc/pam.d, cron files)? | `files` | auditd(host-wide file-change rule), auditd(file watch/modify audit rule), wtmp |
 | FS-02 | Did {user} create or drop files in suspicious/transient locations (/tmp, /dev/shm, /var/tmp, web roots, another user's home)? | `files` | auditd(host-wide file-change rule), auditd(file watch/modify audit rule), wtmp |
@@ -53,39 +55,48 @@ a question, not a limit on which questions exist.
 | FS-07 | Did {user} create symbolic or hard links (link-based evasion, watch bypass, symlink attacks)? | `files` | auditd(host-wide file-change rule), auditd(file watch/modify audit rule) |
 | FS-08 | What files did {user} modify while acting as root (via sudo/su)? | `files` | auditd(host-wide file-change rule), auditd(file watch/modify audit rule), wtmp |
 | FS-09 | Who modified a specific file (e.g. who changed /etc/shadow or /etc/sudoers)? | `files` | auditd(host-wide file-change rule), auditd(file watch/modify audit rule), wtmp |
+| FS-10 | When did {user}'s file changes occur relative to the incident (file-activity timeline)? | `timeline` | auditd(host-wide file-change rule), auditd(file watch/modify audit rule), wtmp |
 | IA-02 | Did {user} fail to authenticate — how many failed attempts, and from where? | `login` | btmp, journal.sshd, auth |
 | IA-06 | Who accessed this host during the window (all authenticated principals)? | `login` | wtmp, journal.sshd, auth, btmp |
 | NW-01 | What outbound network connections did {user} make, and to which destinations and ports? | `network` | auditd(connect audit rule) |
 | NW-02 | Did {user} connect to a specific known-bad IP, host, or port (IOC match)? | `network` | auditd(connect audit rule), auditd(bind audit rule) |
 | NW-05 | What ports or sockets did {user} bind or listen on — any new listeners or backdoors? | `network` | auditd(bind audit rule) |
+| NW-13 | Can {user} be affirmatively cleared of network activity (an evidenced negative)? | `network` | auditd(connect audit rule), auditd(bind audit rule) |
 | PK-01 | What software changed on this host overall during the window, and when — regardless of who did it? | `packages` | packages |
 | PK-02 | When was a specific package (e.g. nginx) installed, upgraded, or removed on this host? | `packages` | packages |
 | PK-04 | Who installed or removed package X? | `packages` | auditd(execve audit rule), auth, packages |
 | PK-06 | Did {user} remove or purge any packages (possible defense evasion / removal of security tooling)? | `packages` | packages, auditd(execve audit rule), auth |
 | PK-07 | Was any package downgraded (a rollback to a potentially vulnerable version)? | `packages` | packages, auditd(execve audit rule), auth |
+| PK-08 | Did {user} install a specific suspicious or known-bad package (e.g. netcat, a cryptominer)? | `packages` | packages, auditd(execve audit rule), auth |
+| PK-12 | How far back does package-change history extend, and did OpenPath lose or fail to parse any package records? | `gaps` | packages |
 | PV-03 | Did {user} attempt to escalate and get denied or fail (wrong password, not in sudoers, command not allowed)? | `privilege` | auditd, auth |
 | PV-04 | What exact commands did {user} run as root (full command lines)? | `commands` | auditd(execve audit rule), auth |
+| PV-05 | Did {user} obtain an interactive root shell (sudo -i, sudo su -, sudo bash)? | `root_activity` | auditd(execve audit rule), auth |
+| PV-08 | When did {user} first and last escalate, and how often (escalation timeline)? | `privilege` | auditd, auth, wtmp |
 | SP-03 | Did {user} run crontab or at commands to schedule tasks (crontab -e, crontab -, at, batch)? | `commands` | auditd(execve audit rule), auth, wtmp |
 | SP-09 | Did {user} start, stop, or restart any service (systemctl start/stop/restart, or the service command)? | `commands` | auditd(execve audit rule), auth, wtmp |
+| TM-01 | Give me a full chronological timeline of everything {user} did in the window, in order. | `timeline` | auditd, wtmp, auth, packages, journal.sshd, btmp |
+| TM-04 | When did {user} first and last appear in the window, and how long were they active (dwell time)? | `timeline` | wtmp, auditd, auth, journal.sshd, packages, btmp |
 | TM-08 | What activity on this host cannot be attributed to any human (daemon/service, cron/boot-time, or unset loginuid)? | `core` | auditd, wtmp |
+| TM-09 | What is the exact provenance of one fact — which log, offset, and raw record does it come from? | `evidence` | auditd, wtmp, journal.sshd, auth, packages, btmp |
+| TM-10 | Is this host instrumented to answer forensic questions about {user} over the window (readiness / coverage)? | `gaps` | auditd, wtmp, btmp, journal.sshd, auth, packages |
+| TM-11 | How far back does the evidence reach for {user} — does coverage actually span the incident time? | `gaps` | wtmp, auditd, auth, packages, btmp, journal.sshd |
+| TM-12 | Were any evidence records dropped, truncated, or unparseable (is the record set intact)? | `gaps` | auditd, wtmp, btmp, journal.sshd, auth, packages |
 
 ## CONTRACTED (roadmap)
 
-### Needs: query/filter/pivot layer shipped (openpath/query.py); per-question certification test pending  (46)
+### Needs: query/filter/pivot layer shipped (openpath/query.py); per-question certification test pending  (32)
 
 | ID | Question | Facet | Blind spots |
 |----|----------|-------|-------------|
 | AC-02 | Did {user} alter an existing account's properties (login shell, home directory, UID, or primary group)? | accounts | auth has NO usermod parser — a non-sudo usermod is invisible on an auth-only host; the specific attribute changed is only in the raw op= ... |
 | AC-04 | Did {user} lock or unlock any account? | accounts | ACCT_LOCK/UNLOCK are auditd-only; auth-only sees a lock only if via sudo passwd -l/usermod -L; the account's CURRENT lock state (shadow !... |
 | AC-06 | Did {user} attempt an account or group change that failed or was denied? | accounts | auth._account/_group hardcode res='success' with no failed-account parser, so the only auth failure signal is a denied sudo of the admin ... |
-| AC-07 | When did {user} make each account/group change, relative to their login and to the incident? | timeline | auth traditional timestamps year-inferred vs auditd epoch-exact, so cross-source ordering within the same second can be ambiguous. |
 | AC-08 | Is the account {user} newly created within the window (and was it subsequently removed)? | accounts | An account created before the retention horizon appears pre-existing; a directory/LDAP account never shows local creation events yet exis... |
 | EX-03 | What did {user} run specifically via sudo? | commands | Strong PARTIAL on auth-only (via_sudo EXEC from COMMAND=; denied sudo reported FAILED, never run). sudo policy (who MAY escalate) not mod... |
 | EX-04 | What were the full command-line arguments (argv) of {user}'s commands, not just the binary? | commands | argv from EXECVE only; PROCTITLE (parsed-but-unused) is the omitted fallback, so truncated/self-rewritten argv degrades to exe/comm; env ... |
 | EX-05 | From which working directory (cwd) did {user} run each command? | commands | cwd needs the CWD record in the SYSCALL group; the auth-only synthesized sudo EXEC carries no cwd at all. |
-| EX-08 | When did {user} run commands — first, last, and the execution timeline? | commands | Traditional auth.log timestamps are year-inferred; rotation/retention truncates the horizon; sub-second ordering relies on the audit serial. |
 | EX-09 | Did {user}'s command executions succeed or fail (and which errored)? | commands | base_attrs.success carries only whether execve() itself succeeded (captured but not surfaced/filtered); the executed PROGRAM's exit code ... |
-| FS-10 | When did {user}'s file changes occur relative to the incident (file-activity timeline)? | timeline | Granularity/completeness inherit every files blind spot (missed in-place writes, watch scope, audit horizon). |
 | FS-12 | What sensitive files did {user} read or access, not modify (reading /etc/shadow, SSH keys, credential stores)? | files | Reads captured ONLY when a read-perm watch (-w -p r) fires, and even then typed FILE_CHANGE op=openat (read vs write not distinguished); ... |
 | IA-01 | How did {user} authenticate (password, public key, or another method)? | login | Method exists ONLY for SSH; console/tty/display-manager logins carry no method anywhere; wtmp-only host has none. Discloses 'sshd journal... |
 | IA-03 | Did {user} access the host locally (console) or remotely (network)? | sessions | Empty ut_host on some network logins can mask remote origin; physical console vs local pseudo-terminal not always separable. |
@@ -95,30 +106,19 @@ a question, not a limit on which questions exist.
 | IA-09 | Did {user} log in at unusual or off-hours times? | login | Login instants are CERTIFIED but 'unusual/off-hours' requires a behavioral baseline the tool does not hold — the anomaly verdict is analy... |
 | NW-03 | Did {user} exhibit anomalous outbound behavior — beaconing, connection fan-out (scanning), or rare/high ports? | network | Reclassified from the generated CERTIFIED: raw connects are certified but the shipped facet does NOT score beaconing/fan-out/rare-port pa... |
 | NW-07 | What local (UNIX-domain) socket connections did {user} make — e.g. to docker.sock or D-Bus/systemd sockets? | network | Only the socket path is recorded, not the identity of the process listening on the other end; abstract (leading-null) names render awkwar... |
-| NW-13 | Can {user} be affirmatively cleared of network activity (an evidenced negative)? | network | Non-syscall flows (firewall-dropped, DNS-only, proxied web) are out of scope, so the negative is bounded to audited connect/bind syscalls... |
 | PK-03 | What version was a package upgraded or downgraded from and to? | packages | dpkg carries version_from/to; dnf.rpm.log carries a single NEVRA string with NO structured prior version — recovering dnf 'from' versions... |
 | PK-05 | By what command, and via sudo or as root directly, did {user} change packages? | packages | Only the manager exec is captured, not shell wrappers/scripts; same 30-min correlation hazards; apt/term.log session context unread. |
-| PK-08 | Did {user} install a specific suspicious or known-bad package (e.g. netcat, a cryptominer)? | packages | A package installed by an unmodeled manager, from source, or via snap/flatpak/pip is invisible; the log does not record the originating r... |
 | PK-11 | Can we confirm {user} installed or changed NO software during the window (evidenced negative)? | packages | An install via an unmodeled manager or from source would not appear, so the negative is scoped to dnf(rpm)/dpkg; retention horizon disclo... |
-| PK-12 | How far back does package-change history extend, and did OpenPath lose or fail to parse any package records? | gaps | Can only report retention for rotations present on disk; a log rotated-and-deleted beyond .4 (dnf)/.1 (dpkg) leaves an unknown-length bli... |
 | PV-01 | How did {user} escalate — via sudo, su, or a direct root login? | privilege | 'sudo -i'/'sudo su -' surface as sudo with a shell cmd (nuance inferred from text); su-to-root vs su-to-other share tool='su' (target onl... |
 | PV-02 | Did anyone log in directly as root, and from where? | privilege | Without auditd auid a root session cannot always be distinguished from an su-to-root reusing the tty; console root shows origin 'local'; ... |
-| PV-05 | Did {user} obtain an interactive root shell (sudo -i, sudo su -, sudo bash)? | root_activity | OpenPath does not semantically flag 'this exec was an interactive shell' — analyst reads it from argv; children of an auth-only sudo shel... |
 | PV-06 | Did {user} run commands as another (non-root) identity via sudo -u / su, and as whom? | commands | switched (auid≠uid) count is CERTIFIED, but no facet field enumerates the TARGET account (derive from euid+uid→name); auth _sudo_command ... |
 | PV-07 | Which escalation event led to which subsequent root actions (link a sudo/su to the activity it enabled)? | root_activity | Links by auid + recency, not kernel session id (ses) or process ancestry, so two overlapping escalations by the same user can bind an act... |
-| PV-08 | When did {user} first and last escalate, and how often (escalation timeline)? | privilege | States times deterministically but does NOT judge them 'unusual' (no baseline); auth traditional timestamps year-inferred; pre-horizon es... |
 | PV-09 | Did {user} gain root by means other than sudo/su — a setuid binary, an exploit, or an LPE? | root_activity | An as_root exec (auid≠uid) with NO backing escalation is a citable signal, but OpenPath cannot prove HOW euid reached 0 (setuid bit vs ca... |
 | SL-03 | Did a reboot terminate {user}'s active login session, and at what time? | sessions | Captures only reboots that interrupted an OPEN session; a reboot while {user} was logged out lives in the unsurfaced BOOT stream; wtmp-only. |
-| TM-01 | Give me a full chronological timeline of everything {user} did in the window, in order. | timeline | Ordering is by timestamp only — no causal/parent-child sequencing; sub-second/clock-skewed events may misorder; non-sshd service and cron... |
 | TM-02 | What did {user} do during a specific login session (the session on tty X that started at T)? | timeline | No pid→sid→session-leader lineage: concurrent same-user sessions cannot be separated; the session→action binding is by timestamp overlap ... |
 | TM-03 | What changed on the host between time T1 and T2 (across all users)? | core | Only subjects discoverable from passwd or the evidence are enumerated; config/state changes with no audited syscall (cron, sudoers, firew... |
-| TM-04 | When did {user} first and last appear in the window, and how long were they active (dwell time)? | timeline | First/last reflect only recorded, attributable events — earlier activity beyond retention or under a missing rule is not counted; dwell t... |
 | TM-06 | Which of {user}'s recorded actions are attributable to them with high confidence, and how? | core | auid is the only true auid-centric key (survives sudo/su); auth/wtmp/journal.sshd attribute by name; packages by 30-min correlation — eac... |
 | TM-07 | Who is the human responsible for a specific action (a command, file change, connection, or account/group change), across sudo/su? | root_activity | Classifies ESCALATED(auid) / DIRECT_ROOT_LOGIN(origin) / ROOT_NO_SESSION / DAEMON; unset loginuid → unattributable, never guessed; auth-o... |
-| TM-09 | What is the exact provenance of one fact — which log, offset, and raw record does it come from? | evidence | Provenance is to the parsed record and its locator, not a tamper-evident hash; if the source log was altered before ingest OpenPath canno... |
-| TM-10 | Is this host instrumented to answer forensic questions about {user} over the window (readiness / coverage)? | gaps | Bounded to the modeled catalog and sources; cannot flag missing instrumentation for evidence classes it has no collector for beyond the s... |
-| TM-11 | How far back does the evidence reach for {user} — does coverage actually span the incident time? | gaps | A merely-quiet continuous log is treated as covering (a late first record is not a gap); horizon is per-source; assumes source timestamps... |
-| TM-12 | Were any evidence records dropped, truncated, or unparseable (is the record set intact)? | gaps | Detects only records the parser SAW-but-could-not-decode; cannot detect records that never reached the log (upstream loss, rotation dropp... |
 | TM-13 | What were OTHER users doing around the time of {user}'s action (concurrent/lateral activity)? | core | Only users discoverable from passwd/evidence are enumerated; correlation is temporal co-occurrence, NOT proof of coordination; no cross-h... |
 | TM-14 | Were there periods when {user} was demonstrably present but their activity is invisible to us? | gaps | No facet computes 'session minus visibility' as a bounded interval; no idle-vs-active distinction within a session (no keystroke/tty-acti... |
 

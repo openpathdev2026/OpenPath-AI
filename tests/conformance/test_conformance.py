@@ -1502,6 +1502,8 @@ class TestQueryCertification(Base):
         ("AC-05", "groups", ["--object", "sudo"], "sudo"),
         ("IA-06", "login", ["--actor", "any"], None),
         ("EX-06", "commands", ["--tty", "pts"], None),
+        ("PV-05", "commands", ["--as-root", "--contains", "bash"], "bash"),
+        ("PK-08", "packages", ["--object", "nc-"], "nc-"),
     ]
 
     def _rich_host(self):
@@ -1518,6 +1520,7 @@ class TestQueryCertification(Base):
         h.exec(1001, 1001, ["crontab", "-e"], "/usr/bin/crontab", ago(hours=4), comm="crontab")
         h.exec(1001, 0, ["systemctl", "restart", "nginx"], "/usr/bin/systemctl", ago(hours=4), euid=0, comm="systemctl")
         h.exec(1001, 0, ["userdel", "victim"], "/usr/sbin/userdel", ago(hours=4), euid=0, comm="userdel")
+        h.exec(1001, 0, ["-bash"], "/bin/bash", ago(hours=4), euid=0, comm="bash")  # interactive root shell
         h.file_change(1001, 1001, "creat", "/tmp/x", ago(hours=4))
         h.file_change(1001, 0, "chmod", "/etc/shadow", ago(hours=4), euid=0, key="etc")
         h.file_change(1001, 1001, "rename", "/home/alice/a", ago(hours=4))
@@ -1533,9 +1536,12 @@ class TestQueryCertification(Base):
                ago(hours=4, minutes=2), euid=0, comm="dnf")
         h.exec(1001, 0, ["dnf", "downgrade", "-y", "openssl"], "/usr/bin/dnf",
                ago(hours=4, minutes=2), euid=0, comm="dnf")
+        h.exec(1001, 0, ["dnf", "install", "-y", "nc"], "/usr/bin/dnf",
+               ago(hours=4, minutes=2), euid=0, comm="dnf")
         h.pkg("Installed", "nginx-1.24.0-1.fc40.x86_64", ago(hours=4))
         h.pkg("Erased", "telnet-1.2-1.fc40.x86_64", ago(hours=4))
         h.pkg("Downgraded", "openssl-3.0.0-1.fc40.x86_64", ago(hours=4))
+        h.pkg("Installed", "nc-1.0-1.fc40.x86_64", ago(hours=4))
         h.sudo(1001, 1001, "/bin/sh", ago(hours=4), res="failed")   # denied escalation
         h.ssh_fail("alice", "198.51.100.9", ago(hours=4))            # failed auth
         h.write()
@@ -1578,6 +1584,61 @@ class TestQueryCertification(Base):
         blob = json.dumps(d)
         self.assertIn("198.51.100.9", blob)
 
+    # -- timeline / projection questions: answered by the ordered facet output -- #
+    def test_timeline_projection_questions(self):
+        """EX-08, AC-07, FS-10, PV-08, TM-04: 'when / first / last / timeline'
+        questions are the facet's chronologically ordered, cited output."""
+        root = self._rich_host()
+        for facet in ("commands", "accounts", "files", "privilege", "timeline"):
+            f = self.finding(root, "alice", facet)
+            self.assertTrue(f.events, f"{facet}: no events")
+            ts = [e.ts for e in f.events]
+            self.assertEqual(ts, sorted(ts), f"{facet}: events not chronological")
+            self.assertTrue(all(e.citations for e in f.events), f"{facet}: uncited event")
+
+    def test_tm04_dwell_time(self):
+        # first/last/dwell: the session carries start + end (duration).
+        f = self.finding(self._rich_host(), "alice", "sessions")
+        self.assertTrue(any(e.ts_end is not None for e in f.events))
+
+    # -- coverage / conservation / provenance meta-questions -- #
+    def test_tm09_provenance_of_facts(self):
+        # The evidence question surfaces, per claim, the source + locator + raw record.
+        d = self._run(self._rich_host(), "files", ["--path", "/etc/shadow"])
+        rec = d["evidence"][0]["records"][0]
+        self.assertTrue(rec["source_id"] and rec["locator"] and rec["raw"])
+
+    def test_tm10_readiness_coverage(self):
+        rc, out = self.cli("--coverage", "--data-root", str(self._rich_host()))
+        self.assertEqual(rc, 0)
+        self.assertIn("QUESTION FAMILIES", out)
+        self.assertIn("Certified:", out)
+
+    def test_tm11_tm12_pk12_horizon_and_conservation(self):
+        rc, out = self.cli("--coverage", "--format", "json",
+                           "--data-root", str(self._rich_host()))
+        cov = json.loads(out)["coverage"]
+        srcs = {s["source_id"]: s for s in cov["sources"]}
+        # TM-11: evidence reach (retention horizon) is reported per source.
+        self.assertIn("horizon_end", srcs["auditd"])
+        # TM-12 / PK-12: conservation counters exist per source (records unaccounted-for).
+        self.assertIn("unparseable", srcs["packages"])
+        self.assertIn("records_scanned", srcs["auditd"])
+
+    def test_nw13_evidenced_negative_cleared(self):
+        # A fully-instrumented host where alice made no network connections: she can
+        # be affirmatively cleared -- an evidenced negative, scoped, not absolute.
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.enable_execve().enable_network()
+        h.exec(1001, 1001, ["id"], "/usr/bin/id", ago(hours=2))  # active, but no network
+        h.write()
+        d = self._run(root, "network", ["--direction", "outbound"])
+        self.assertEqual(d["finding"]["events"], [])
+        self.assertEqual(d["finding"]["confidence"], "certified")
+        self.assertIn("within the covered evidence scope", d["finding"]["summary"])
+
 
 class TestProductionContract(Base):
     """The full production contract is honest: CERTIFIED == the wired core, and
@@ -1588,10 +1649,12 @@ class TestProductionContract(Base):
     # is the guard: flipping any other question to CERTIFIED without a proving test
     # fails here (prevents silent over-certification).
     _QUERY_CERTIFIED = {
-        "AC-01", "AC-03", "AC-05", "EX-01", "EX-02", "EX-06", "EX-07", "EX-10",
-        "FS-01", "FS-02", "FS-03", "FS-05", "FS-06", "FS-07", "FS-08", "FS-09",
-        "IA-02", "IA-06", "NW-01", "NW-02", "NW-05", "PK-01", "PK-02", "PK-04",
-        "PK-06", "PK-07", "PV-03", "PV-04", "SP-03", "SP-09", "TM-08",
+        "AC-01", "AC-03", "AC-05", "AC-07", "EX-01", "EX-02", "EX-06", "EX-07",
+        "EX-08", "EX-10", "FS-01", "FS-02", "FS-03", "FS-05", "FS-06", "FS-07",
+        "FS-08", "FS-09", "FS-10", "IA-02", "IA-06", "NW-01", "NW-02", "NW-05",
+        "NW-13", "PK-01", "PK-02", "PK-04", "PK-06", "PK-07", "PK-08", "PK-12",
+        "PV-03", "PV-04", "PV-05", "PV-08", "SP-03", "SP-09", "TM-01", "TM-04",
+        "TM-08", "TM-09", "TM-10", "TM-11", "TM-12",
     }
 
     def test_certified_set_is_exactly_the_proven_set(self):

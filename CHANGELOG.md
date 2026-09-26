@@ -28,7 +28,7 @@ based on Keep a Changelog; dates are UTC.
   `/etcpasswd`, contradictory flags are rejected, and the files facet discloses the
   in-place-content-edit (open+write) blind spot on every answer. Ten contract
   questions (AC-01/03, FS-01/03/05, EX-01/02, NW-01/05, TM-08) move CONTRACTED ->
-  CERTIFIED (25 total), each with a proving test; the contract test pins the
+  CERTIFIED (60 total), each with a proving test; the contract test pins the
   CERTIFIED set so nothing can be silently over-certified. CONTRACTED/PARTIAL are
   temporary build states -- the destination is every legitimate question CERTIFIED
   by building the missing capability, never by weakening the bar.
