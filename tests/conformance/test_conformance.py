@@ -3847,6 +3847,31 @@ class TestConservationAudit(Base):
                             for g in led.all_gaps()))
 
 
+    def test_pure_vs_mixed_stream_conservation_semantics(self):
+        # Conservation is defined correctly per stream KIND:
+        #  * a PURE record stream (JSONL journal) — every line is an entry, so an
+        #    undecodable line is a LOST record and MUST be counted as unparseable;
+        #  * a MIXED syslog stream (auth.log) — full of kernel/cron/systemd lines we
+        #    do not model, so a non-matching line is NOT one of our records and must
+        #    NOT inflate unparseable (else every normal host shows fabricated loss).
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.ssh_accept("alice", "1.1.1.1", ago(hours=2))       # pure JSONL entry
+        h.auth_ssh_accept("alice", "1.1.1.1", ago(hours=2))  # mixed-stream record
+        h.write()
+        js = root / "var/log/openpath/journal-sshd.jsonl"
+        js.write_text(js.read_text() + "{not valid json\n")
+        al = root / "var/log/auth.log"
+        al.write_text(al.read_text()
+                      + "Sep 25 08:00:00 host kernel: [12345.6] usb 1-1: new device\n")
+        led = self.result(root, "alice", "login").ledger
+        self.assertEqual(led.get("journal.sshd").unparseable, 1,
+                         "corrupt JSONL entry not counted (pure stream)")
+        self.assertEqual(led.get("auth").unparseable, 0,
+                         "a non-modeled syslog line wrongly counted as lost (mixed stream)")
+
+
 class TestAttributionChains(Base):
     """Expanded SSH -> X attribution chains + shared-TTY/reconnect: the human is
     credited correctly (by auid) regardless of the escalation path or TTY reuse."""
