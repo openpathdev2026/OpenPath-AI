@@ -1,6 +1,6 @@
 # OpenPath-AI — Evidence Surface
 
-_Generated 2026-09-26T05:50:02.857713+00:00 by `scripts/gen_evidence_surface.py` — regenerate to re-verify._
+_Generated 2026-09-26T10:20:31.034617+00:00 by `scripts/gen_evidence_surface.py` — regenerate to re-verify._
 
 The exact evidence surface, derived from the shipped collectors. This is a production artifact: OpenPath's answers are only ever as good as the evidence below, and every claim it makes cites one of these sources.
 

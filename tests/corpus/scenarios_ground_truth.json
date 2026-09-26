@@ -1,0 +1,122 @@
+[
+  {
+    "id": "SC-01-ssh-login",
+    "description": "Investigator: alice logged in over SSH from 203.0.113.7 (publickey).",
+    "user": "alice",
+    "facet": "login",
+    "window": "last 24 hours",
+    "expect": {
+      "confidence": "certified",
+      "min_events": 1,
+      "events_contain": ["203.0.113.7"],
+      "actor": "alice"
+    }
+  },
+  {
+    "id": "SC-02-sudo-escalation",
+    "description": "Investigator: alice escalated via sudo to run a package manager as root.",
+    "user": "alice",
+    "facet": "privilege",
+    "window": "last 24 hours",
+    "expect": {
+      "confidence": "certified",
+      "min_events": 1,
+      "events_contain": ["sudo"]
+    }
+  },
+  {
+    "id": "SC-03-sudo-su",
+    "description": "Investigator: alice also became root via su (auid stays alice).",
+    "user": "alice",
+    "facet": "privilege",
+    "window": "last 24 hours",
+    "expect": {
+      "min_events": 2,
+      "events_contain": ["su session"]
+    }
+  },
+  {
+    "id": "SC-04-user-creation",
+    "description": "Investigator: user 'bob' (uid 1002) was created during the window.",
+    "facet": "accounts",
+    "actor_mode": "any",
+    "window": "last 24 hours",
+    "expect": {
+      "confidence": "certified",
+      "min_events": 1,
+      "events_contain": ["bob"],
+      "events_absent": ["charlie"]
+    }
+  },
+  {
+    "id": "SC-05-group-modification",
+    "description": "Investigator: group 'deploygrp' (gid 3000) was created during the window.",
+    "facet": "groups",
+    "actor_mode": "any",
+    "window": "last 24 hours",
+    "expect": {
+      "min_events": 1,
+      "events_contain": ["deploygrp"]
+    }
+  },
+  {
+    "id": "SC-06-package-install",
+    "description": "Investigator: nginx was installed during the window.",
+    "facet": "packages",
+    "actor_mode": "any",
+    "window": "last 24 hours",
+    "expect": {
+      "min_events": 1,
+      "events_contain": ["nginx"]
+    }
+  },
+  {
+    "id": "SC-07-cron-persistence",
+    "description": "Investigator: a cron.d job for alice runs /usr/local/bin/deploy.sh every 10 minutes.",
+    "facet": "persistence",
+    "actor_mode": "any",
+    "window": "last 24 hours",
+    "expect": {
+      "min_events": 1,
+      "events_contain": ["deploy.sh"]
+    }
+  },
+  {
+    "id": "SC-08-file-modification",
+    "description": "Investigator: /etc/hosts was modified as root by alice.",
+    "user": "alice",
+    "facet": "files",
+    "window": "last 24 hours",
+    "expect": {
+      "confidence": "certified",
+      "min_events": 1,
+      "events_contain": ["/etc/hosts"]
+    }
+  },
+  {
+    "id": "SC-09-network-activity",
+    "description": "Investigator: alice made an outbound connection to 93.184.216.34:443.",
+    "user": "alice",
+    "facet": "network",
+    "window": "last 24 hours",
+    "expect": {
+      "confidence": "certified",
+      "min_events": 1,
+      "events_contain": ["93.184.216.34"],
+      "events_absent": ["10.0.0.99"]
+    }
+  },
+  {
+    "id": "SC-10-logout",
+    "description": "Investigator: alice's pts/0 session opened from 203.0.113.7 and later closed (logout).",
+    "user": "alice",
+    "facet": "sessions",
+    "window": "last 24 hours",
+    "expect": {
+      "confidence": "certified",
+      "min_events": 1,
+      "events_contain": ["closed"],
+      "actor": "alice"
+    }
+  }
+]

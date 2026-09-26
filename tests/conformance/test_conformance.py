@@ -3552,6 +3552,38 @@ class TestTruthCorpus(Base):
         self.assertEqual(report["failed"], 1)
         self.assertGreaterEqual(report["false_positives"], 1)
 
+    def test_ten_investigation_scenarios_all_match(self):
+        # The centerpiece: a synthetic host enacts the ten canonical scenarios (SSH
+        # login, sudo escalation, sudo su, user creation, group modification, package
+        # install, cron persistence, file modification, network activity, logout) and
+        # OpenPath's answers must match the independently-authored ground truth.
+        from tests.corpus.build_scenario_host import build
+        tc = self._corpus()
+        root = self.make_root()
+        build(root, NOW)
+        truth_path = (Path(__file__).resolve().parents[1] / "corpus"
+                      / "scenarios_ground_truth.json")
+        truth = json.loads(truth_path.read_text())
+        self.assertEqual(len(truth), 10, "expected ten scenario cases")
+        report = tc.run_corpus(str(root), truth, NOW.isoformat())
+        self.assertEqual(report["failed"], 0,
+                         "scenarios should all match: "
+                         + str([r for r in report["results"] if not r["ok"]]))
+        self.assertEqual(report["passed"], 10)
+
+    def test_scenario_corpus_detects_a_wrong_answer(self):
+        # Seed a false claim against the same host (alice installed apache — she did
+        # not) and confirm the corpus flags it rather than rubber-stamping.
+        from tests.corpus.build_scenario_host import build
+        tc = self._corpus()
+        root = self.make_root()
+        build(root, NOW)
+        bad = [{"id": "SC-BAD", "facet": "packages", "actor_mode": "any",
+                "window": "last 24 hours", "expect": {"events_contain": ["apache"]}}]
+        report = tc.run_corpus(str(root), bad, NOW.isoformat())
+        self.assertEqual(report["failed"], 1)
+        self.assertGreaterEqual(report["false_negatives"], 1)
+
     def test_example_ground_truth_is_well_formed(self):
         # The shipped template must stay valid so operators can adapt it.
         truth_path = (Path(__file__).resolve().parents[1] / "corpus"
@@ -3632,6 +3664,15 @@ class TestEvidencePackage(Base):
         gonogo = gsp.sec8_go_no_go()
         self.assertIn("NO-GO", gonogo)
         self.assertIn("GATE", gonogo)
+        # Architecture trace: every facet family + every contract question id appear.
+        import scripts.gen_architecture_trace as gat
+        from openpath.contract import PRODUCTION_CONTRACT
+        from openpath.facets import FAMILIES
+        trace = gat.build()
+        for fam in FAMILIES:
+            self.assertIn(f"`{fam.name}`", trace)
+        for q in PRODUCTION_CONTRACT:
+            self.assertIn(q.id, trace)
 
     def test_latency_harness_never_fabricates(self):
         # Each row is either a real measurement or an explicit not_measurable with a

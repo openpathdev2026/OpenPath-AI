@@ -201,8 +201,10 @@ openpath-ai --selfcheck                                # host-independent health
 python3 scripts/measure_capture_latency.py             # measured capture latency
 python3 scripts/truth_corpus.py --data-root <host> --truth gt.json   # answers vs ground truth
 python3 scripts/gen_evidence_surface.py                # regenerate EVIDENCE-SURFACE.md
+python3 scripts/gen_architecture_trace.py              # regenerate ARCHITECTURE-TRACE.md
 python3 scripts/gen_evidence_package.py                # regenerate PRODUCTION-EVIDENCE.md
 python3 scripts/gen_signoff_package.py                 # regenerate PRODUCTION-SIGNOFF.md
+./scripts/reproduce.sh                                 # clean-checkout reproduction (all of the above)
 ```
 
 ## Sign-off & evidence artifacts
@@ -217,9 +219,18 @@ than taken on faith:
 - **`docs/PRODUCTION-EVIDENCE.md`** — full 153-question catalog with certification
   rationale, source inventory, and executed test results.
 - **`docs/EVIDENCE-SURFACE.md`** — the machine-generated evidence inventory.
+- **`docs/ARCHITECTURE-TRACE.md`** — walks every answer back Question → Facet →
+  Event Types → Collectors → Raw Sources, derived from code.
 - **`docs/CATALOG-FREEZE.md`** — the v1 freeze definition and history.
+- **`docs/REPRODUCTION.md`** + **`scripts/reproduce.sh`** — the independent-
+  reproduction protocol: rebuild the whole sign-off from a clean checkout via the
+  documented install path (a Go/No-Go gate is a third-party run of it).
 
-The Host Truth Corpus **framework** (`scripts/truth_corpus.py`, worked example in
-`tests/corpus/`) compares OpenPath's answers to independently-declared ground truth
-and is tested to detect both false-negative and false-positive claims — populating
-it on a real host is the last-mile trust step.
+The Host Truth Corpus **framework** (`scripts/truth_corpus.py`) compares OpenPath's
+answers to independently-declared ground truth and is tested to detect both
+false-negative and false-positive claims. Its worked example
+(`tests/corpus/scenarios_ground_truth.json` + `build_scenario_host.py`) covers the
+ten canonical investigation scenarios (SSH login, sudo escalation, sudo su, user
+creation, group modification, package install, cron persistence, file modification,
+network activity, logout), checked 10/10 — populating it on a real host is the
+last-mile trust step.
