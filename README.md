@@ -23,12 +23,15 @@ openpath-ai --catalog     # print the frozen question catalog (the contract)
 [Testing](docs/TESTING.md) · [Changelog](CHANGELOG.md)
 
 **Catalog vs. contract.** The **certified catalog** (15 questions, `--catalog`) is
-the wired, conformance-proven core answerable today. The **production contract**
-(`--contract`, [docs/PRODUCTION-CATALOG.md](docs/PRODUCTION-CATALOG.md)) is the full
-set of questions OpenPath commits to (153), each with a per-question status —
-CERTIFIED or CONTRACTED. Certification is a property of a question, not a ceiling on
-which questions exist; a CONTRACTED question names the collector or query subsystem
-it needs and is never answered from thin air.
+the original wired federation core. The **production contract** (`--contract`,
+[docs/PRODUCTION-CATALOG.md](docs/PRODUCTION-CATALOG.md)) is the full set of
+questions OpenPath commits to (153), each with a per-question status. **All 153 are
+now CERTIFIED (CONTRACTED 0)** — every question is answered end-to-end through the
+shipped CLI with cited, evidence-scoped, gap-disclosing findings. Certification is a
+property of a question, not a ceiling on which questions exist; it means the
+deterministic evidence path exists and is proven, and runtime confidence still
+degrades honestly (UNANSWERABLE with a named remedy) on a host that lacks a given
+evidence source. Nothing is ever answered from thin air.
 
 Activity is narrated in flowing sentences that name the **object each action was
 performed against**, and every claim is tied to the raw record behind it:
@@ -275,7 +278,9 @@ Large `audit.log` files are streamed, so memory stays bounded regardless of size
 ```
 openpath/
   model/      # events, citations, coverage, findings, identity, time (pure logic)
-  sources/    # collectors: wtmp (binary), auditd, sshd journal, packages, persistence, authz, journald
+  sources/    # collectors: wtmp/btmp, auditd, sshd+general journald, packages,
+              #   persistence, authz, pkgpolicy, shell_history, firewall, conntrack,
+              #   netlogs, file_integrity, ip_reputation
   facets/     # one analyzer per question family + Core/Evidence/Gaps aggregators
   engine.py   # collect once -> resolve identity -> run facet
   catalog.py  # the frozen CERTIFIED 15 (wired) + per-question EvidenceSpec

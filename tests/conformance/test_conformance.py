@@ -2975,6 +2975,29 @@ class TestProductionContract(Base):
             if q.status is CatalogStatus.CERTIFIED:
                 get_facet(q.facet)  # raises if not wired
 
+    def test_every_certified_facet_answerable_and_cited(self):
+        """Anti-false-green: on a host that carries every modeled evidence source,
+        EVERY certified question's facet must be answerable (never UNANSWERABLE) and
+        must emit only CITED events -- no bare/uncited/unsupported certification."""
+        from openpath.contract import PRODUCTION_CONTRACT, CatalogStatus
+        from openpath.model.evidence_matrix import Confidence
+        root = self.fully_instrumented()
+        env, win = self.env(root), self.win()
+        checked = set()
+        for q in PRODUCTION_CONTRACT:
+            if q.status is not CatalogStatus.CERTIFIED or q.facet in checked:
+                continue
+            checked.add(q.facet)
+            res = Engine().analyze(env, "alice", win, q.facet)
+            self.assertIsNot(res.finding.confidence, Confidence.UNANSWERABLE,
+                             f"{q.id} ({q.facet}) is CERTIFIED but UNANSWERABLE on a "
+                             f"fully-instrumented host")
+            for e in res.finding.events:
+                self.assertTrue(e.citations,
+                                f"{q.id} ({q.facet}) emitted an uncited event: "
+                                f"{e.summary}")
+        self.assertGreaterEqual(len(checked), 25)
+
     def test_scoreboard_renders_and_counts_match(self):
         rc, out = self.cli("--contract")
         self.assertEqual(rc, 0)

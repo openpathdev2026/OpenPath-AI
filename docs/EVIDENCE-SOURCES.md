@@ -34,7 +34,15 @@ not belong in the product.
 | `packages` (dnf.rpm/dpkg) | Q11 |
 | `persistence` (cron/at, systemd units/timers, linger, legacy startup) | SP-01 SP-06 SP-07 SP-13 SP-14 SP-15 |
 | `authz` (group/sudoers/shadow, ~/.ssh/authorized_keys, sshd_config) | AC-10 AC-11 AC-12 PV-10 PV-11 IA-12 |
-| `journald` (general journal: shutdown/service/crash/clock/boot-target) | SL-04 SL-05 SL-09 SL-11 SL-12 SL-13 SL-14 |
+| `journald` (general journal: shutdown/service/crash/clock, non-SSH PAM auth, faillock) | SL-04 SL-05 SL-09 SL-11 SL-12 SL-13 SL-14 IA-11 PV-12 |
+| `pkgpolicy` (repos, versionlock, gpgcheck, coverage) | PK-13 PK-14 PK-15 PK-16 |
+| `shell_history` (~/.bash_history, ~/.zsh_history) | EX-12 |
+| `firewall` (nftables/iptables ruleset) | NW-09 |
+| `conntrack` (/proc/net/nf_conntrack) | NW-04 NW-06 NW-14 |
+| `netlogs` (DNS / firewall-drop / proxy / socket-lifetime logs) | NW-08 NW-10 NW-12 NW-15 |
+| `file_integrity` (FIM / content-snapshot diffs) | FS-13 |
+| `ip_reputation` (geo / threat-intel feed) | IA-10 |
+| `auditd` read watches (`-p r`) | FS-12 |
 
 Boot/reboot history (SL-01/02/06/07/08/10) is reconstructed by the
 `system_lifecycle` facet from the `EventType.BOOT` records `wtmp` already emits,

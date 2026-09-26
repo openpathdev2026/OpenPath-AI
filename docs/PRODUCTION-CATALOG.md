@@ -13,11 +13,13 @@ a question, not a limit on which questions exist.
   certification is not complete. Each names the collector or subsystem it needs.
   A CONTRACTED question is never answered from thin air.
 
-> The deterministic **query/filter/pivot subsystem** (`openpath/query.py`) and the
-> **persistence-state collector** (cron/at, systemd units/timers, linger, legacy
-> startup) are now shipped and proven. The remaining CONTRACTED questions are
-> grouped below by the collector or subsystem each still needs; that list is the
-> roadmap to the full contract.
+> **The entire contract is CERTIFIED (CONTRACTED 0).** Every question is
+> answered end-to-end through the shipped CLI with cited, evidence-scoped,
+> gap-disclosing findings. Certification means the deterministic evidence
+> path exists and is proven; runtime confidence still degrades honestly
+> (UNANSWERABLE with a named remedy) on a host that lacks a given evidence
+> source, exactly as for auditd-dependent questions. Answers are complete
+> *within the covered evidence scope*, never absolute.
 
 ## CERTIFIED (answerable today)
 
