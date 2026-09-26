@@ -3492,6 +3492,112 @@ class TestDeployment(Base):
         self.assertFalse(checks["collectors"])
 
 
+class TestTruthCorpus(Base):
+    """Exercises the Host Truth Corpus framework: OpenPath's answers are compared to
+    an independently-declared ground truth. Crucially, this proves the framework
+    DETECTS disagreement (a false-negative and a false-positive claim), so a passing
+    corpus is evidence, not a rubber stamp."""
+
+    def _host_matching_the_example(self):
+        # A synthetic host whose real activity matches tests/corpus/example_ground_truth.json:
+        # alice ran ls + curl; bob was created via sudo; alice made no network connection.
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.enable_execve().enable_network()
+        h.login("alice", ago(hours=5), line="pts/0", host="10.0.0.5", until=ago(hours=1))
+        h.exec(1001, 1001, ["ls", "-la"], "/usr/bin/ls", ago(hours=4), comm="ls")
+        h.exec(1001, 1001, ["curl", "http://x"], "/usr/bin/curl", ago(hours=4),
+               comm="curl")
+        h.sudo(1001, 0, "/usr/sbin/useradd bob", ago(hours=3))
+        h.add_user(1001, "bob", 1002, ago(hours=3))
+        # (deliberately no connect events for alice -> a trustworthy clean negative)
+        h.write()
+        return root
+
+    def _corpus(self):
+        import scripts.truth_corpus as tc
+        return tc
+
+    def test_true_claims_all_match(self):
+        tc = self._corpus()
+        truth_path = (Path(__file__).resolve().parents[1] / "corpus"
+                      / "example_ground_truth.json")
+        truth = json.loads(truth_path.read_text())
+        report = tc.run_corpus(str(self._host_matching_the_example()), truth,
+                               NOW.isoformat())
+        self.assertEqual(report["failed"], 0,
+                         f"true claims should all match: {report}")
+        self.assertEqual(report["passed"], report["total"])
+
+    def test_framework_detects_a_false_negative_claim(self):
+        # Ground truth claims alice ran `nmap`; she did not. The corpus must FLAG it
+        # (else it would rubber-stamp OpenPath missing real activity).
+        tc = self._corpus()
+        bad = [{"id": "TC-FN", "user": "alice", "facet": "commands",
+                "window": "last 24 hours", "expect": {"events_contain": ["nmap"]}}]
+        report = tc.run_corpus(str(self._host_matching_the_example()), bad,
+                               NOW.isoformat())
+        self.assertEqual(report["failed"], 1)
+        self.assertGreaterEqual(report["false_negatives"], 1)
+
+    def test_framework_detects_a_false_positive_claim(self):
+        # Ground truth claims alice did NOT run `curl`; she did. The corpus must FLAG
+        # it (else it would rubber-stamp a false positive / misreport).
+        tc = self._corpus()
+        bad = [{"id": "TC-FP", "user": "alice", "facet": "commands",
+                "window": "last 24 hours", "expect": {"events_absent": ["curl"]}}]
+        report = tc.run_corpus(str(self._host_matching_the_example()), bad,
+                               NOW.isoformat())
+        self.assertEqual(report["failed"], 1)
+        self.assertGreaterEqual(report["false_positives"], 1)
+
+    def test_example_ground_truth_is_well_formed(self):
+        # The shipped template must stay valid so operators can adapt it.
+        truth_path = (Path(__file__).resolve().parents[1] / "corpus"
+                      / "example_ground_truth.json")
+        truth = json.loads(truth_path.read_text())
+        self.assertTrue(truth)
+        for case in truth:
+            self.assertIn("id", case)
+            self.assertIn("facet", case)
+            self.assertIn("expect", case)
+
+
+class TestCatalogFreeze(Base):
+    """Enforces the OpenPath v1 catalog freeze: the question contract cannot drift
+    from the frozen fingerprint/count without an explicit, deliberate v2 decision.
+    A failure here is the signal to make that decision (see docs/CATALOG-FREEZE.md),
+    not a test to patch away."""
+
+    def test_catalog_v1_frozen(self):
+        from openpath.contract import (
+            FROZEN_V1_FINGERPRINT, FROZEN_V1_QUESTION_COUNT,
+            PRODUCTION_CONTRACT, contract_fingerprint)
+        self.assertEqual(
+            contract_fingerprint(), FROZEN_V1_FINGERPRINT,
+            "the v1 question contract changed; if intended, cut v2 per "
+            "docs/CATALOG-FREEZE.md (bump FROZEN_V1_FINGERPRINT), else revert")
+        self.assertEqual(len(PRODUCTION_CONTRACT), FROZEN_V1_QUESTION_COUNT)
+
+    def test_freeze_fingerprint_is_prose_stable(self):
+        # The fingerprint must depend only on ids+statuses, so prose edits (question
+        # wording, blind-spot notes) don't spuriously break the freeze.
+        import openpath.contract as c
+        original = c.contract_fingerprint()
+        q0 = c.PRODUCTION_CONTRACT[0]
+        patched = c.ContractQuestion(
+            q0.id, q0.question + " (reworded)", q0.facet, q0.status, q0.needs,
+            q0.sources, q0.blind_spots + " extra note")
+        saved = c.PRODUCTION_CONTRACT[0]
+        c.PRODUCTION_CONTRACT[0] = patched
+        try:
+            self.assertEqual(c.contract_fingerprint(), original,
+                             "prose edit moved the fingerprint")
+        finally:
+            c.PRODUCTION_CONTRACT[0] = saved
+
+
 class TestEvidencePackage(Base):
     """Guards the evidence-package generator so it cannot silently rot: the
     code-derived sections must reflect the real contract and collector set."""
@@ -3510,6 +3616,23 @@ class TestEvidencePackage(Base):
         # The fingerprint is deterministic and surfaced.
         self.assertRegex(contract_fingerprint(), r"^[0-9a-f]{12}$")
 
+    def test_signoff_generators_code_sections(self):
+        # Guard the evidence-surface and sign-off generators' code-derived sections
+        # (no heavy test-backed sections here, so this stays fast).
+        import scripts.gen_evidence_surface as ges
+        import scripts.gen_signoff_package as gsp
+        from openpath.sources import default_collectors
+        surface = ges.build()
+        for c in default_collectors():
+            self.assertIn(f"`{c.source_id}`", surface)
+        self.assertIn("Failure-mode behavior", surface)
+        # Sign-off code-only sections.
+        self.assertIn("16 collectors", gsp.sec1_evidence_surface())
+        self.assertIn("frozen at", gsp.sec5_catalog_freeze())
+        gonogo = gsp.sec8_go_no_go()
+        self.assertIn("NO-GO", gonogo)
+        self.assertIn("GATE", gonogo)
+
     def test_latency_harness_never_fabricates(self):
         # Each row is either a real measurement or an explicit not_measurable with a
         # method -- never a made-up number.
@@ -3520,7 +3643,7 @@ class TestEvidencePackage(Base):
         with mock.patch.object(mcl, "_TIMEOUT", 0.3):
             report = mcl.run()
         self.assertTrue(report["rows"])
-        for r in report["rows"]:
+        for r in report["rows"] + report.get("stage_breakdown", []):
             self.assertIn(r["status"], ("measured", "not_measurable"))
             if r["status"] == "measured":
                 self.assertIsInstance(r["seconds"], (int, float))

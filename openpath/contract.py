@@ -524,6 +524,18 @@ def status_counts() -> dict:
     return out
 
 
+# -- Catalog freeze -------------------------------------------------------------
+# OpenPath v1 is FROZEN at this question set. The fingerprint below pins the exact
+# ids+statuses that constitute the v1 product contract; ``test_catalog_v1_frozen``
+# fails if the live contract drifts from it. That is deliberate: after freeze, the
+# v1 catalog does not grow silently -- a new/changed question is a v2 decision made
+# on purpose (bump FROZEN_V1_FINGERPRINT and record it in docs/CATALOG-FREEZE.md),
+# never an accident. This is what lets documentation, support, training, demos, and
+# acceptance testing stabilize against a fixed target.
+FROZEN_V1_FINGERPRINT = "109709966e2b"
+FROZEN_V1_QUESTION_COUNT = 153
+
+
 def contract_fingerprint() -> str:
     """A stable short digest of the contract's identity (ids + statuses).
 

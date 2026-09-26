@@ -1,6 +1,6 @@
 # OpenPath-AI — Production-readiness evidence package
 
-_Generated 2026-09-26T03:23:12.696403+00:00 by `scripts/gen_evidence_package.py` — regenerate to re-verify._
+_Generated 2026-09-26T05:50:02.964216+00:00 by `scripts/gen_evidence_package.py` — regenerate to re-verify._
 
 Version `0.1.0` · contract fingerprint `109709966e2b` · CERTIFIED 153 / CONTRACTED 0.
 
@@ -241,14 +241,14 @@ Escalation vs direct-root-login vs daemon classification.
 
 ## 4. Capture-latency measurements
 
-Measured on this host at 2026-09-26T03:23:32.886603+00:00 (euid 0). OpenPath's own rule applies to its self-measurement: **measured or disclosed, never fabricated.** A `not_measurable` row names the exact method to measure it on a suitable (e.g. auditd-instrumented, non-container) host.
+Measured on this host at 2026-09-26T05:50:23.133550+00:00 (euid 0). OpenPath's own rule applies to its self-measurement: **measured or disclosed, never fabricated.** A `not_measurable` row names the exact method to measure it on a suitable (e.g. auditd-instrumented, non-container) host.
 
 | stage | status | seconds | detail / method |
 |-------|--------|---------|-----------------|
 | audit_event_to_observable | not_measurable | — | auditctl absent -- the kernel audit subsystem is host-global and not namespaced, so it is unavailable in this (container) environment — method: with auditd: `auditctl -w <tmpfile> -p wa -k lat`; touch the file; poll /var/log/audit/audit.log for the SYSCALL record; report elapsed |
 | journal_event_to_observable | not_measurable | — | marker not visible within 20s (journald may be volatile/rate-limited here) — method: emit `logger -t <tag> <marker>`; poll `journalctl -t <tag> -o json` until the marker appears; report the elapsed time |
-| analysis_latency | measured | 0.0313 | 40 events, 16 sources over / |
-| bundle_export_latency | measured | 0.0367 | bundle size 495 KiB |
+| analysis_latency | measured | 0.0262 | 40 events, 16 sources over / |
+| bundle_export_latency | measured | 0.0338 | bundle size 495 KiB |
 
 Reproduce: `python3 scripts/measure_capture_latency.py`. On a live host every stage is bounded by the source's own write latency; on a bundle every stage is bounded by the stamped `captured-at` instant.
 

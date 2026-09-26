@@ -186,6 +186,46 @@ def measure_bundle_export_latency():
         shutil.rmtree(dest, ignore_errors=True)
 
 
+def measure_stage_breakdown():
+    """Decompose the analysis pipeline into its stages over the real `/`.
+
+    This is the queryable-after-collection half of the lifecycle -- everything
+    OpenPath controls once the evidence exists on disk. The upstream halves
+    (event->source, source->on-disk) are the OS's, measured by the audit/journal
+    rows above on an instrumented host. Returns one row per stage plus a total.
+    """
+    method = "time each in-process pipeline stage of a full analysis over / for root"
+    try:
+        from openpath.engine import Engine
+        from openpath.env import Env
+        from openpath.facets import get_facet
+        from openpath.model.timerange import build_range
+        from openpath.render import render_json
+        now = datetime.now(timezone.utc)
+        env = Env(data_root=Path("/"), now=now, local_tz=timezone.utc)
+        window = build_range(expr="last 24 hours", since=None, until=None,
+                             now=now, default_tz=timezone.utc)
+        eng = Engine()
+        stages = []
+        t = time.monotonic()
+        collected = eng.collect(env, window)               # read + parse all sources
+        stages.append(("T_collect_and_parse", time.monotonic() - t))
+        t = time.monotonic()
+        result = eng.analyze(env, "root", window, "timeline")  # identity + facet + confidence
+        stages.append(("T_resolve_and_query", time.monotonic() - t))
+        t = time.monotonic()
+        render_json(result)                                # narration / serialization
+        stages.append(("T_narration", time.monotonic() - t))
+        rows = [_measured(f"stage:{name}", secs, method) for name, secs in stages]
+        rows.append(_measured("stage:T_total", sum(s for _n, s in stages), method,
+                              note=f"{len(collected.events)} events, "
+                                   f"{len(collected.ledger.sources)} sources"))
+        return rows
+    except Exception as exc:  # noqa: BLE001
+        return [_not_measurable("stage:breakdown", f"{type(exc).__name__}: {exc}",
+                                method)]
+
+
 def run() -> dict:
     rows = [
         measure_audit_latency(),
@@ -198,6 +238,7 @@ def run() -> dict:
         "host_data_root": "/",
         "euid": os.geteuid(),
         "rows": rows,
+        "stage_breakdown": measure_stage_breakdown(),
     }
 
 
@@ -210,6 +251,13 @@ def render_text(report: dict) -> str:
         secs = f"{r['seconds']:.4f}" if r["seconds"] is not None else "-"
         detail = r.get("note") or r.get("reason") or ""
         out.append(f"{r['stage']:30s} {r['status']:15s} {secs:>9s}  {detail}")
+    if report.get("stage_breakdown"):
+        out.append("")
+        out.append("Pipeline stage breakdown (queryable-after-collection, over /):")
+        for r in report["stage_breakdown"]:
+            secs = f"{r['seconds']:.4f}" if r["seconds"] is not None else "-"
+            detail = r.get("note") or r.get("reason") or ""
+            out.append(f"  {r['stage']:24s} {secs:>9s}  {detail}")
     out.append("")
     out.append("Rows marked 'not_measurable' name the exact method to measure them on "
                "a suitable host;")

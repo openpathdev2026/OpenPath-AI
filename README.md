@@ -325,11 +325,14 @@ tests/
   conformance/# the product-readiness baseline (synthetic real-format hosts)
   live/       # live checks against the real host filesystem
   selfcheck.py# host-independent health probe (--selfcheck)
-scripts/      # collect_bundle.sh, live_conformance.sh,
-              #   measure_capture_latency.py, gen_evidence_package.py
+scripts/      # collect_bundle.sh, live_conformance.sh, measure_capture_latency.py,
+              #   truth_corpus.py, gen_evidence_surface.py, gen_evidence_package.py,
+              #   gen_signoff_package.py
 contrib/      # openpath.rules (recommended auditd rules)
 Containerfile # non-root, zero-dep, read-only-friendly batch image (+ .dockerignore)
+tests/        # unit/, conformance/, live/, corpus/ (host-truth-corpus example)
 docs/         # CLIENT-QUESTION-CATALOG, PRODUCTION-CATALOG, EVIDENCE-SOURCES,
-              # ARCHITECTURE, DEPLOYMENT, PRODUCTION-READINESS, PRODUCTION-EVIDENCE,
-              # LIMITATIONS, TESTING
+              # EVIDENCE-SURFACE, ARCHITECTURE, DEPLOYMENT, PRODUCTION-READINESS,
+              # PRODUCTION-EVIDENCE, PRODUCTION-SIGNOFF, CATALOG-FREEZE, LIMITATIONS,
+              # TESTING
 ```

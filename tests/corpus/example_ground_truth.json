@@ -1,0 +1,38 @@
+[
+  {
+    "id": "TC-01",
+    "description": "Investigator confirmed alice ran `ls` and `curl` in an interactive session yesterday.",
+    "user": "alice",
+    "facet": "commands",
+    "window": "last 24 hours",
+    "expect": {
+      "confidence": "certified",
+      "min_events": 2,
+      "events_contain": ["ls", "curl"],
+      "events_absent": ["nmap", "wget"],
+      "actor": "alice"
+    }
+  },
+  {
+    "id": "TC-02",
+    "description": "Investigator confirmed user `bob` was created (via sudo useradd) during the window.",
+    "facet": "accounts",
+    "actor_mode": "any",
+    "window": "last 24 hours",
+    "expect": {
+      "min_events": 1,
+      "events_contain": ["bob"]
+    }
+  },
+  {
+    "id": "TC-03",
+    "description": "Investigator confirmed alice made NO outbound network connection (host has a connect rule, so a clean negative is trustworthy).",
+    "user": "alice",
+    "facet": "network",
+    "window": "last 24 hours",
+    "expect": {
+      "max_events": 0,
+      "events_absent": ["203.0.113"]
+    }
+  }
+]
