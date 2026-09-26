@@ -5,7 +5,7 @@ The full set of user-facing forensic questions OpenPath commits to, each with a
 count is an output of the analysis, not a target. Certification is a property of
 a question, not a limit on which questions exist.
 
-**153 questions** — CERTIFIED 140, CONTRACTED 13.
+**153 questions** — CERTIFIED 141, CONTRACTED 12.
 
 - **CERTIFIED** — wired and proven end-to-end today (see `catalog.py` + the
   conformance suite). Complete *within the covered evidence scope*, never absolute.
@@ -74,6 +74,7 @@ a question, not a limit on which questions exist.
 | FS-09 | Who modified a specific file (e.g. who changed /etc/shadow or /etc/sudoers)? | `files` | auditd(host-wide file-change rule), auditd(file watch/modify audit rule), wtmp |
 | FS-10 | When did {user}'s file changes occur relative to the incident (file-activity timeline)? | `timeline` | auditd(host-wide file-change rule), auditd(file watch/modify audit rule), wtmp |
 | FS-11 | Did file changes occur with no interactive session behind them (unattended, automated, cron/daemon-driven)? | `files` | auditd(host-wide file-change rule), auditd(file watch/modify audit rule), wtmp |
+| FS-12 | What sensitive files did {user} read or access, not modify (reading /etc/shadow, SSH keys, credential stores)? | `file_access` | auditd(file watch/modify audit rule) |
 | FS-14 | Did {user} modify files they do not own or that fall outside their normal scope (another user's data, system-owned files)? | `files` | filesystem ownership/state baseline collector, auditd(host-wide file-change rule) |
 | IA-01 | How did {user} authenticate (password, public key, or another method)? | `login` | journal.sshd, auth |
 | IA-02 | Did {user} fail to authenticate — how many failed attempts, and from where? | `login` | btmp, journal.sshd, auth |
@@ -166,11 +167,10 @@ a question, not a limit on which questions exist.
 
 ## CONTRACTED (roadmap)
 
-### Needs: query/filter/pivot layer shipped (openpath/query.py); per-question certification test pending  (4)
+### Needs: query/filter/pivot layer shipped (openpath/query.py); per-question certification test pending  (3)
 
 | ID | Question | Facet | Blind spots |
 |----|----------|-------|-------------|
-| FS-12 | What sensitive files did {user} read or access, not modify (reading /etc/shadow, SSH keys, credential stores)? | files | Reads captured ONLY when a read-perm watch (-w -p r) fires, and even then typed FILE_CHANGE op=openat (read vs write not distinguished); ... |
 | TM-03 | What changed on the host between time T1 and T2 (across all users)? | core | Only subjects discoverable from passwd or the evidence are enumerated; config/state changes with no audited syscall (cron, sudoers, firew... |
 | TM-06 | Which of {user}'s recorded actions are attributable to them with high confidence, and how? | core | auid is the only true auid-centric key (survives sudo/su); auth/wtmp/journal.sshd attribute by name; packages by 30-min correlation — eac... |
 | TM-13 | What were OTHER users doing around the time of {user}'s action (concurrent/lateral activity)? | core | Only users discoverable from passwd/evidence are enumerated; correlation is temporal co-occurrence, NOT proof of coordination; no cross-h... |

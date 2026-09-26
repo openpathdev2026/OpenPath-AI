@@ -198,6 +198,15 @@ _BY_FACET.setdefault(
         "shell_history", ("shell_history",), True, _SHELLHIST_SPEC),
 )
 
+_FILEACCESS_SPEC = _S(certified=[["auditd(file watch/modify audit rule)"]],
+                      fatal=["auditd"])
+_BY_FACET.setdefault(
+    "file_access",
+    CatalogQuestion(
+        "FS-12", "What sensitive files did {user} read (not modify)?",
+        "file_access", ("auditd",), True, _FILEACCESS_SPEC),
+)
+
 _FIREWALL_SPEC = _S(certified=[["firewall"]], fatal=["firewall"])
 _BY_FACET.setdefault(
     "firewall",

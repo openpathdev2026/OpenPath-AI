@@ -900,7 +900,7 @@ class TestReadiness(Base):
         report = self._rd(self.fully_instrumented())
         # all substantive data questions answerable (aggregates not counted)
         self.assertEqual(report.answerable, report.data_total)
-        self.assertEqual(report.data_total, 17)
+        self.assertEqual(report.data_total, 18)
 
     def test_debian_host_blind_on_files_and_network_only(self):
         root = self.make_root()
@@ -2622,6 +2622,40 @@ class TestScopeSessionVisibility(Base):
                             for n in d["finding"]["notes"]))
 
 
+class TestFileReads(Base):
+    """Certifies FS-12: sensitive files READ (not modified) under a -p r audit
+    watch, and that a read is never miscounted as a modification."""
+
+    def test_fs12_sensitive_read(self):
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.enable_execve().enable_file_syscalls().watch("/etc", "r", "shadow-read")
+        h.file_read(1001, 0, "/etc/shadow", ago(hours=2), euid=0, key="shadow-read")
+        h.file_read(1001, 1001, "/home/bob/.ssh/id_rsa", ago(hours=2), key="ssh-read")
+        h.write()
+        rc, out = self.cli("--data-root", str(root), "--format", "json",
+                           "--facet", "file_access", "--user", "alice")
+        self.assertEqual(rc, 0, out)
+        d = json.loads(out)
+        self.assertTrue(d["finding"]["events"])
+        self.assertTrue(all(e["records"] for e in d["evidence"]))
+        self.assertIn("SENSITIVE", d["finding"]["summary"])
+        self.assertIn("/etc/shadow", json.dumps(d))
+
+    def test_fs12_read_not_counted_as_modification(self):
+        # the latent-bug guard: a -p r read must NOT appear in "files modified"
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.enable_execve().enable_file_syscalls().watch("/etc", "r", "shadow-read")
+        h.file_read(1001, 0, "/etc/shadow", ago(hours=2), euid=0, key="shadow-read")
+        h.write()
+        f = self.finding(root, "alice", "files")
+        paths = {e.attrs.get("path") for e in f.events}
+        self.assertNotIn("/etc/shadow", paths)
+
+
 class TestNonSshAuthAndLockout(Base):
     """Certifies IA-11 (authentication to a non-SSH PAM service) and PV-12 (account
     lockout / faillock) from the general journal, surfaced by the login facet."""
@@ -2678,7 +2712,7 @@ class TestProductionContract(Base):
     # questions that have a dedicated proving test in TestQueryLayer. This allowlist
     # is the guard: flipping any other question to CERTIFIED without a proving test
     # fails here (prevents silent over-certification).
-    _QUERY_CERTIFIED = {"AC-01", "AC-02", "AC-03", "AC-04", "AC-05", "AC-06", "AC-07", "AC-08", "AC-09", "AC-10", "AC-11", "AC-12", "AC-13", "EX-01", "EX-02", "EX-03", "EX-04", "EX-05", "EX-06", "EX-07", "EX-08", "EX-09", "EX-10", "EX-11", "EX-12", "FS-01", "FS-02", "FS-03", "FS-04", "FS-05", "FS-06", "FS-07", "FS-08", "FS-09", "FS-10", "FS-11", "FS-14", "IA-01", "IA-02", "IA-03", "IA-04", "IA-05", "IA-06", "IA-07", "IA-08", "IA-09", "IA-11", "IA-12", "NW-01", "NW-02", "NW-03", "NW-05", "NW-07", "NW-09", "NW-11", "NW-13", "PK-01", "PK-02", "PK-03", "PK-04", "PK-05", "PK-06", "PK-07", "PK-08", "PK-09", "PK-10", "PK-11", "PK-12", "PK-13", "PK-14", "PK-15", "PK-16", "PV-01", "PV-02", "PV-03", "PV-04", "PV-05", "PV-06", "PV-07", "PV-08", "PV-09", "PV-10", "PV-11", "PV-12", "SL-01", "SL-02", "SL-03", "SL-04", "SL-05", "SL-06", "SL-07", "SL-08", "SL-09", "SL-10", "SL-11", "SL-12", "SL-13", "SL-14", "SP-01", "SP-02", "SP-03", "SP-04", "SP-05", "SP-06", "SP-07", "SP-08", "SP-09", "SP-10", "SP-11", "SP-12", "SP-13", "SP-14", "SP-15", "SP-16", "TM-01", "TM-02", "TM-04", "TM-05", "TM-07", "TM-08", "TM-09", "TM-10", "TM-11", "TM-12", "TM-14"}
+    _QUERY_CERTIFIED = {"AC-01", "AC-02", "AC-03", "AC-04", "AC-05", "AC-06", "AC-07", "AC-08", "AC-09", "AC-10", "AC-11", "AC-12", "AC-13", "EX-01", "EX-02", "EX-03", "EX-04", "EX-05", "EX-06", "EX-07", "EX-08", "EX-09", "EX-10", "EX-11", "EX-12", "FS-01", "FS-02", "FS-03", "FS-04", "FS-05", "FS-06", "FS-07", "FS-08", "FS-09", "FS-10", "FS-11", "FS-12", "FS-14", "IA-01", "IA-02", "IA-03", "IA-04", "IA-05", "IA-06", "IA-07", "IA-08", "IA-09", "IA-11", "IA-12", "NW-01", "NW-02", "NW-03", "NW-05", "NW-07", "NW-09", "NW-11", "NW-13", "PK-01", "PK-02", "PK-03", "PK-04", "PK-05", "PK-06", "PK-07", "PK-08", "PK-09", "PK-10", "PK-11", "PK-12", "PK-13", "PK-14", "PK-15", "PK-16", "PV-01", "PV-02", "PV-03", "PV-04", "PV-05", "PV-06", "PV-07", "PV-08", "PV-09", "PV-10", "PV-11", "PV-12", "SL-01", "SL-02", "SL-03", "SL-04", "SL-05", "SL-06", "SL-07", "SL-08", "SL-09", "SL-10", "SL-11", "SL-12", "SL-13", "SL-14", "SP-01", "SP-02", "SP-03", "SP-04", "SP-05", "SP-06", "SP-07", "SP-08", "SP-09", "SP-10", "SP-11", "SP-12", "SP-13", "SP-14", "SP-15", "SP-16", "TM-01", "TM-02", "TM-04", "TM-05", "TM-07", "TM-08", "TM-09", "TM-10", "TM-11", "TM-12", "TM-14"}
 
     def test_certified_set_is_exactly_the_proven_set(self):
         from openpath.contract import PRODUCTION_CONTRACT, CatalogStatus

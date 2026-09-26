@@ -104,6 +104,12 @@ _FILE_WRITE_SYSCALLS = {
     "truncate", "ftruncate", "creat",
     "link", "linkat", "symlink", "symlinkat", "mknod", "mknodat",
 }
+# Pure-read syscalls (FS-12). open/openat are intentionally NOT here (ambiguous
+# read-vs-write); a read is inferred for those from a read-permission watch key.
+_FILE_READ_SYSCALLS = {
+    "read", "pread64", "readv", "readlink", "readlinkat", "access", "faccessat",
+    "faccessat2",
+}
 
 _ACCOUNT_TYPES = {
     "ADD_USER": "add_user",
@@ -496,10 +502,21 @@ class AuditdCollector(Collector):
         if sysname in _NET_SYSCALLS:
             ev = self._network_event(g, sfields, sysname, base_attrs, citations)
             return [ev] if ev else []
-        # File modification: an explicitly-writing syscall, a create/delete PATH,
-        # or a write-watch key that fired.
         paths = self._all(g, "PATH")
         nametypes = {f.get("nametype") for f, _r, _l in paths}
+        # File READ (FS-12): a pure-read syscall, or a read-permission watch (its
+        # key names a read, e.g. -w /etc/shadow -p r -k shadow-read) that did NOT
+        # also modify. Classified as FILE_READ so it never inflates "files changed".
+        is_read = paths and (
+            sysname in _FILE_READ_SYSCALLS
+            or (key is not None and "read" in key.lower()
+                and sysname not in _FILE_WRITE_SYSCALLS
+                and not ({"CREATE", "DELETE"} & nametypes)))
+        if is_read:
+            return [self._file_read_event(g, sfields, sysname, base_attrs,
+                                          citations, paths)]
+        # File modification: an explicitly-writing syscall, a create/delete PATH,
+        # or a write-watch key that fired.
         is_file_change = (
             sysname in _FILE_WRITE_SYSCALLS
             or {"CREATE", "DELETE"} & nametypes
@@ -508,6 +525,18 @@ class AuditdCollector(Collector):
         if is_file_change and paths:
             return [self._file_event(g, sfields, sysname, base_attrs, citations, paths)]
         return []
+
+    def _file_read_event(self, g, sfields, sysname, base_attrs, citations, paths):
+        target = None
+        for f, _r, _l in paths:
+            if f.get("nametype") in ("NORMAL", "UNKNOWN") or target is None:
+                target = f.get("name")
+        attrs = dict(base_attrs)
+        attrs.update({"path": target, "op": "read"})
+        return Event(
+            ts=g.ts, type=EventType.FILE_READ, source_id=self.source_id,
+            summary=f"read {target}", auid=_auid(sfields), uid=_int(sfields, "uid"),
+            attrs=attrs, citations=citations)
 
     def _exec_event(self, g, sfields, base_attrs, citations) -> Event:
         argv = self._argv(g)

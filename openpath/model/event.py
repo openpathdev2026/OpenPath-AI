@@ -37,6 +37,7 @@ class EventType(enum.Enum):
 
     # Filesystem
     FILE_CHANGE = "file_change"  # create/modify/delete/rename/attr
+    FILE_READ = "file_read"      # read/open-for-read/access of a watched path (-p r)
 
     # Identity administration
     ACCOUNT_CHANGE = "account_change"  # add/del user, passwd change
@@ -149,6 +150,8 @@ class Event:
                     or self.summary)
         if t is EventType.FILE_CHANGE:
             return ("file", a.get("path") or "?")
+        if t is EventType.FILE_READ:
+            return ("file-read", a.get("path") or "?")
         if t is EventType.NETWORK:
             ai = a.get("addr_info")
             if isinstance(ai, dict):

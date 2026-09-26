@@ -242,6 +242,20 @@ class HostBuilder:
         self._audit.append(f"type=SOCKADDR msg=audit({aid}): saddr={_saddr_unix(path)}")
         return self
 
+    def file_read(self, auid, uid, path, at, euid=None, key="shadow-read",
+                  comm="cat", exe="/usr/bin/cat"):
+        """A read of a watched path under a -p r audit rule (FS-12)."""
+        euid = uid if euid is None else euid
+        sid = next(self._serial)
+        aid = f"{_epoch_msec(at)}:{sid}"
+        self._audit.append(
+            f"type=SYSCALL msg=audit({aid}): arch=c000003e syscall={SYS['openat']} "
+            f"success=yes exit=3 ppid=1000 pid=3{sid} auid={auid} uid={uid} euid={euid} "
+            f'comm="{comm}" exe="{exe}" key="{key}"')
+        self._audit.append(
+            f'type=PATH msg=audit({aid}): item=0 name="{path}" nametype=NORMAL')
+        return self
+
     def bind(self, auid, uid, ip, port, at, comm="nginx", exe="/usr/sbin/nginx"):
         sid = next(self._serial)
         aid = f"{_epoch_msec(at)}:{sid}"

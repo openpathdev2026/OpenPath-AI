@@ -15,6 +15,7 @@ from typing import Dict, List, Type
 from openpath.facets.accounts import AccountsFacet, GroupsFacet
 from openpath.facets.authorization import AuthorizationFacet
 from openpath.facets.base import AnalysisContext, Facet
+from openpath.facets.file_access import FileAccessFacet
 from openpath.facets.files import FilesFacet
 from openpath.facets.firewall import FirewallFacet
 from openpath.facets.lifecycle import SystemLifecycleFacet
@@ -63,8 +64,9 @@ FAMILIES: List[FamilySpec] = [
     FamilySpec(17, "process_tree", "Process ancestry", ProcessTreeFacet),
     FamilySpec(18, "shell_history", "Shell history", ShellHistoryFacet),
     FamilySpec(19, "firewall", "Firewall", FirewallFacet),
-    FamilySpec(20, "evidence", "Evidence", EvidenceFacet),
-    FamilySpec(21, "gaps", "Gaps", GapsFacet),
+    FamilySpec(20, "file_access", "File access", FileAccessFacet),
+    FamilySpec(21, "evidence", "Evidence", EvidenceFacet),
+    FamilySpec(22, "gaps", "Gaps", GapsFacet),
 ]
 
 _BY_NAME: Dict[str, FamilySpec] = {spec.name: spec for spec in FAMILIES}

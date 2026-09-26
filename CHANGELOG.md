@@ -6,6 +6,15 @@ based on Keep a Changelog; dates are UTC.
 ## [Unreleased]
 
 ### Added
+- **Sensitive-file reads (FS-12, 141 total).** A new `EventType.FILE_READ` and
+  `file_access` facet answer "what sensitive files did {user} READ (not modify)?"
+  from read-permission audit watches (`-w /etc/shadow -p r`). The auditd collector
+  now classifies a read (a pure-read syscall, or a read-keyed watch) as FILE_READ
+  rather than a modification -- fixing a latent over-report where a `-p r` read of a
+  watched path was counted as a file change (a regression test guards it). Reads of
+  shadow / SSH keys / sudoers / TLS keys are flagged SENSITIVE; the answer discloses
+  it is scoped to the read watches in place.
+
 - **Non-SSH authentication and account lockout (140 total).** The general journald
   collector now emits, from the journal, non-SSH PAM authentication (IA-11 -- a
   ``session opened`` / ``authentication`` line for a service other than sshd, e.g.

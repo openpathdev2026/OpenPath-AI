@@ -197,7 +197,7 @@ PRODUCTION_CONTRACT: List[ContractQuestion] = [
                      'files', _C, '',
                      ('auditd(host-wide file-change rule)', 'auditd(file watch/modify audit rule)', 'wtmp'), "Can say 'no human loginuid behind this write' but cannot name WHICH job/timer/service; wtmp absent weakens the covering-session distinction."),
     ContractQuestion('FS-12', 'What sensitive files did {user} read or access, not modify (reading /etc/shadow, SSH keys, credential stores)?',
-                     'files', _K, 'query/filter/pivot layer shipped (openpath/query.py); per-question certification test pending',
+                     'file_access', _C, '',
                      ('auditd(file watch/modify audit rule)',), 'Reads captured ONLY when a read-perm watch (-w -p r) fires, and even then typed FILE_CHANGE op=openat (read vs write not distinguished); a host-wide write-syscall rule does NOT capture reads; no fanotify access-stream collector.'),
     ContractQuestion('FS-13', 'What exactly changed inside a modified file (content, before/after diff, which lines/keys)?',
                      'NEW:file_integrity', _K, 'file-integrity / content-baseline collector (AIDE/tripwire DB, content-capturing FIM, backup/snapshot diffs, or git/etckeeper history of /etc)',
