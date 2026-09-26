@@ -61,6 +61,34 @@ say "Q6 Root activity"  ; run root root_activity         | check "root attributi
 say "Q12 Evidence"      ; run "$TESTUSER" evidence       | check "evidence cited" "record(s)"
 say "Q13 Gaps"          ; run "$TESTUSER" gaps           | check "gaps runs" "Gaps"
 
+# -- deployment / trust properties (real host) --------------------------------
+say "Health probe"
+eval "$OPENPATH --selfcheck" | check "selfcheck healthy" "SELFCHECK: HEALTHY"
+
+say "Readiness (--coverage)"
+eval "$OPENPATH --coverage --format json --data-root /" > /tmp/openpath_cov.json 2>/dev/null || true
+# On a rule-loaded live host the audit source is present and its capture is live
+# (read at analysis time), so a quiet answer would mean quiet -- not a stale snapshot.
+python3 - <<'PY' < /tmp/openpath_cov.json | check "auditd live + present" "AUDITD_LIVE_OK"
+import json,sys
+try:
+    d=json.load(sys.stdin); a=[s for s in d["coverage"]["sources"] if s["source_id"]=="auditd"]
+    ok = a and a[0]["capture_mode"]=="live" and a[0]["status"] in ("available","empty")
+    print("AUDITD_LIVE_OK" if ok else f"AUDITD_LIVE_BAD {a[:1]}")
+except Exception as e:
+    print(f"AUDITD_LIVE_BAD {e}")
+PY
+
+say "Offline bundle round-trip"
+BUNDLE="$(mktemp -d)"
+"$HERE/scripts/collect_bundle.sh" "$BUNDLE" >/dev/null 2>&1 || true
+[[ -f "$BUNDLE/var/log/openpath/captured-at" ]] \
+  && echo "captured-at present" || echo "captured-at MISSING"
+{ [[ -f "$BUNDLE/var/log/openpath/captured-at" ]] && echo present; } \
+  | check "bundle stamps capture time" "present"
+eval "$OPENPATH --coverage --data-root \"$BUNDLE\"" | check "bundle analyzable offline" "QUESTION FAMILIES"
+rm -rf "$BUNDLE"
+
 say "Cleanup"
 rm -f /etc/openpath_probe_marker
 groupdel openpath_probe_grp 2>/dev/null || true

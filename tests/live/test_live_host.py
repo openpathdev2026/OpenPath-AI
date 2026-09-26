@@ -16,6 +16,9 @@ activity is attributed with evidence.
 
 from __future__ import annotations
 
+import contextlib
+import io
+import json
 import os
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -24,9 +27,19 @@ from pathlib import Path
 from openpath.engine import Engine
 from openpath.env import Env
 from openpath.facets import FAMILIES, get_facet
+from openpath.model.coverage import SourceStatus
 from openpath.model.timerange import TimeRange
 
 _RUN_LIVE = os.environ.get("OPENPATH_LIVE", "1") != "0"
+
+
+def _cli(*argv):
+    """Run the shipped CLI in-process against the real host; return (rc, stdout)."""
+    from openpath.cli import main
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = main(list(argv))
+    return rc, buf.getvalue()
 
 
 @unittest.skipUnless(_RUN_LIVE, "set OPENPATH_LIVE=0 to skip live-host tests")
@@ -90,6 +103,86 @@ class TestLiveHost(unittest.TestCase):
                 finding.gaps,
                 "commands returned no gap on a host without an execve rule",
             )
+
+    # -- trust properties, validated against the real filesystem ------------- #
+
+    def test_every_source_has_a_valid_status_and_capture_mode(self):
+        # No collector may leave a source in an impossible state on a real host, and
+        # every source must declare its capture_mode so a quiet answer is
+        # interpretable (live vs snapshot).
+        valid = set(SourceStatus)
+        self.assertTrue(self.collected.ledger.sources, "no sources probed")
+        for s in self.collected.ledger.sources:
+            self.assertIn(s.status, valid, f"{s.source_id}: bad status {s.status}")
+            self.assertIn(s.capture_mode, ("live", "export"),
+                          f"{s.source_id}: bad capture_mode {s.capture_mode!r}")
+
+    def test_direct_filesystem_sources_are_live_on_a_live_host(self):
+        # Reading the real '/' at analysis time: on-host log artifacts are observed
+        # up to now (capture_mode 'live'), so a quiet answer means quiet -- not a
+        # stale snapshot. (Journal collectors may be 'export' if they read a dump.)
+        for sid in ("wtmp", "btmp", "auditd", "auth", "packages"):
+            cov = self.collected.ledger.get(sid)
+            if cov is not None:
+                self.assertEqual(cov.capture_mode, "live",
+                                 f"{sid}: on-host artifact should be 'live'")
+
+    def test_live_host_has_no_bundle_not_yet_observed_tail(self):
+        # A live analysis carries no capture-time marker, so it must NOT fabricate a
+        # bundle-level 'not yet observed' tail -- the whole point of the distinction.
+        self.assertIsNone(self.collected.ledger.captured_at)
+        recency = [g for g in self.collected.ledger.all_gaps()
+                   if g.question == "recency" and g.source_id is None]
+        self.assertEqual(recency, [], "live host invented a bundle recency tail")
+
+    def test_conservation_no_silent_drops_on_real_data(self):
+        # Evidence conservation on real logs: any source that could not decode a
+        # record MUST surface a conservation gap -- a record can never vanish
+        # silently, even on messy real-world input.
+        gaps = self.collected.ledger.all_gaps()
+        for s in self.collected.ledger.sources:
+            if s.unparseable > 0:
+                matched = [g for g in gaps if g.question == "conservation"
+                           and g.source_id == s.source_id]
+                self.assertTrue(
+                    matched,
+                    f"{s.source_id}: {s.unparseable} undecoded record(s) not disclosed")
+
+    def test_selfcheck_passes_through_shipped_cli(self):
+        rc, out = _cli("--selfcheck")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("SELFCHECK: HEALTHY", out)
+
+    def test_coverage_cli_end_to_end_against_real_root(self):
+        rc, out = _cli("--coverage", "--format", "json", "--data-root", "/")
+        self.assertEqual(rc, 0, out)
+        cov = json.loads(out)["coverage"]
+        self.assertTrue(cov["sources"])
+        # Every source is classified and every gap names a reason -- the readiness
+        # report is complete and honest on a real host.
+        for s in cov["sources"]:
+            self.assertIn("status", s)
+            self.assertIn("capture_mode", s)
+        for g in cov["gaps"]:
+            self.assertTrue(g.get("reason"), "a gap without a reason")
+
+    def test_full_analysis_cli_end_to_end_for_root(self):
+        # The shipped path (main), not just the engine API: a real analysis for root
+        # over multiple facets must exit 0, parse, and keep every claim cited.
+        for facet in ("core", "timeline", "sessions", "commands"):
+            rc, out = _cli("--user", "root", "--facet", facet, "--format", "json",
+                           "--data-root", "/")
+            self.assertEqual(rc, 0, f"{facet}: rc={rc}\n{out}")
+            d = json.loads(out)
+            for e in d.get("evidence", []):
+                self.assertTrue(e.get("records"),
+                                f"{facet}: evidence object without a raw record")
+
+    def test_all_users_sweep_does_not_crash_on_real_host(self):
+        rc, out = _cli("--all-users", "--facet", "core", "--format", "json",
+                       "--data-root", "/", "--window", "last 7 days")
+        self.assertEqual(rc, 0, out)
+        json.loads(out)  # must be well-formed
 
 
 if __name__ == "__main__":
