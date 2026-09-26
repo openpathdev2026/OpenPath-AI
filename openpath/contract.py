@@ -522,3 +522,17 @@ def status_counts() -> dict:
     for q in PRODUCTION_CONTRACT:
         out[q.status] += 1
     return out
+
+
+def contract_fingerprint() -> str:
+    """A stable short digest of the contract's identity (ids + statuses).
+
+    Two builds with the same fingerprint answer the same question set at the same
+    certification levels, so an operator can verify an upgrade deterministically
+    (``--selfcheck`` prints it) without diffing docs. It changes if and only if a
+    question is added/removed or its status changes -- prose edits do not move it.
+    """
+    import hashlib
+    payload = ";".join(f"{q.id}={q.status.value}"
+                       for q in sorted(PRODUCTION_CONTRACT, key=lambda q: q.id))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]

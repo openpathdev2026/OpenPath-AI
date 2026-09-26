@@ -49,3 +49,22 @@ class Collector(ABC):
         if not timestamps:
             return None, None
         return min(timestamps), max(timestamps)
+
+    @staticmethod
+    def _readable(path) -> bool:
+        """True if ``path`` can actually be opened for reading.
+
+        ``Path.exists()`` says nothing about permission: a root-only log
+        (``/var/log/audit/audit.log`` at 0600, ``/etc/shadow`` at 0640,
+        ``/var/log/btmp``) *exists* on the host but cannot be read by a non-root
+        process -- the common case when OpenPath runs unprivileged (e.g. a container
+        that mounts the host read-only without CAP_DAC_READ_SEARCH). Collectors use
+        this to tell "source absent / quiet" apart from "present but unreadable", so a
+        permission failure is disclosed as UNREADABLE with a remedy and NEVER reported
+        as a false "nothing happened".
+        """
+        try:
+            with open(path, "rb"):
+                return True
+        except OSError:
+            return False

@@ -3424,5 +3424,151 @@ class TestNarration(Base):
             self.assertEqual(payload["evidence"], [])
 
 
+class TestDeployment(Base):
+    """The container/deployment contract for a stateless batch CLI: a host-independent
+    health probe, a verifiable contract identity for upgrades, and host readiness."""
+
+    def test_selfcheck_healthy_and_exit_zero(self):
+        rc, out = self.cli("--selfcheck")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("SELFCHECK: HEALTHY", out)
+        # Every probe passed; none reported FAIL.
+        self.assertNotIn("[FAIL]", out)
+        for probe in ("version", "collectors", "contract", "facets", "pipeline"):
+            self.assertIn(probe, out)
+
+    def test_selfcheck_probes_the_real_wiring(self):
+        # The pipeline probe actually runs the engine over an empty root (start-with-
+        # nothing resilience) and the collector/contract probes count the real sets.
+        from openpath import selfcheck
+        checks = {name: (ok, detail) for name, ok, detail in selfcheck.run_checks()}
+        self.assertTrue(all(ok for ok, _d in checks.values()))
+        self.assertIn("16 collectors", checks["collectors"][1])
+        self.assertIn("readiness over an empty root OK", checks["pipeline"][1])
+
+    def test_contract_fingerprint_stable_and_status_bound(self):
+        # The fingerprint is deterministic (an operator can compare it across an
+        # upgrade) and moves only when a question id/status changes -- not on prose.
+        from openpath.contract import contract_fingerprint
+        self.assertEqual(contract_fingerprint(), contract_fingerprint())
+        self.assertRegex(contract_fingerprint(), r"^[0-9a-f]{12}$")
+        # It is printed by --selfcheck so a deploy can assert on it.
+        _rc, out = self.cli("--selfcheck")
+        self.assertIn(contract_fingerprint(), out)
+
+    def test_selfcheck_reports_unhealthy_on_broken_wiring(self):
+        # If a collector cannot be constructed, the probe must FAIL (non-zero), not
+        # silently pass -- the health check has to actually detect breakage.
+        from unittest import mock
+        from openpath import selfcheck
+
+        def boom():
+            raise RuntimeError("simulated broken collector registry")
+
+        with mock.patch("openpath.sources.default_collectors", side_effect=boom):
+            checks = {n: ok for n, ok, _d in selfcheck.run_checks()}
+        self.assertFalse(checks["collectors"])
+
+
+class TestResilience(Base):
+    """Failure-mode behavior a deployable tool must get right: a permission failure
+    is disclosed (never a false negative), a re-run is idempotent, and a failed
+    output write exits cleanly instead of crashing or half-succeeding."""
+
+    def test_auditd_permission_denied_is_unreadable_not_false_negative(self):
+        # audit.log is PRESENT but unreadable (the non-root-container case, simulated
+        # deterministically via _readable so it holds regardless of the test uid).
+        # It must be disclosed UNREADABLE and the Commands answer must be UNANSWERABLE
+        # with a gap -- never a confident "no commands" (a false negative).
+        from unittest import mock
+        from openpath.sources.base import Collector
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.enable_execve()
+        h.exec(1001, 1001, ["ls"], "/usr/bin/ls", ago(hours=2), comm="ls")
+        h.write()
+        real = Collector._readable   # the underlying function (staticmethod unwrapped)
+        deny = staticmethod(lambda p: False if "audit.log" in str(p) else real(p))
+        with mock.patch.object(Collector, "_readable", deny):
+            rc, out = self.cli("--coverage", "--format", "json",
+                               "--data-root", str(root))
+            self.assertEqual(rc, 0, out)
+            auditd = [s for s in json.loads(out)["coverage"]["sources"]
+                      if s["source_id"] == "auditd"][0]
+            self.assertEqual(auditd["status"], "unreadable")
+            rc2, out2 = self.cli("--user", "alice", "--facet", "commands",
+                                 "--format", "json", "--data-root", str(root))
+            self.assertEqual(rc2, 0, out2)
+            f = json.loads(out2)["finding"]
+        self.assertEqual(f["confidence"], "unanswerable")
+        self.assertTrue(f.get("gaps"), "unreadable source produced no disclosed gap")
+        self.assertEqual(f["events"], [])   # no fabricated activity
+
+    def test_readable_helper_detects_unreadable(self):
+        from openpath.sources.base import Collector
+        root = self.make_root()
+        f = root / "f"
+        f.write_text("x")
+        sub = root / "sub"
+        sub.mkdir()
+        self.assertTrue(Collector._readable(f))         # a readable file
+        self.assertFalse(Collector._readable(sub))      # a directory: not a file read
+        self.assertFalse(Collector._readable(root / "nope"))   # absent
+
+    def test_rerun_is_idempotent(self):
+        # Stateless: the same inputs yield byte-identical output, and a second run
+        # neither depends on nor mutates anything from the first (recovery == re-run).
+        root = self.fully_instrumented()
+        rc1, out1 = self.cli("--user", "alice", "--facet", "commands",
+                             "--format", "json", "--data-root", str(root))
+        rc2, out2 = self.cli("--user", "alice", "--facet", "commands",
+                             "--format", "json", "--data-root", str(root))
+        self.assertEqual(rc1, 0)
+        self.assertEqual(rc2, 0)
+        self.assertEqual(out1, out2)
+
+    def test_broken_pipe_exits_cleanly(self):
+        # A consumer that closes the pipe (e.g. `| head`) makes the write raise
+        # BrokenPipeError; main() must catch it and return 141, not dump a traceback.
+        import io
+        import contextlib
+        from openpath.cli import main
+
+        class _BrokenStdout(io.StringIO):
+            def write(self, s):
+                raise BrokenPipeError(32, "Broken pipe")
+
+        root = self.fully_instrumented()
+        argv = ["--user", "alice", "--facet", "commands", "--format", "json",
+                "--data-root", str(root), "--now", NOW.isoformat()]
+        with contextlib.redirect_stdout(_BrokenStdout()):
+            rc = main(argv)
+        self.assertEqual(rc, 141)
+
+    def test_output_ioerror_exits_nonzero_not_crash(self):
+        # A non-pipe write failure (e.g. ENOSPC writing a report to a full volume)
+        # surfaces as a clean non-zero exit with a stderr message, never a partial
+        # success or an opaque crash.
+        import io
+        import contextlib
+        from unittest import mock
+        from openpath.cli import main
+
+        class _FullDisk(io.StringIO):
+            def write(self, s):
+                raise OSError(28, "No space left on device")
+
+        root = self.fully_instrumented()
+        argv = ["--user", "alice", "--facet", "commands", "--format", "json",
+                "--data-root", str(root), "--now", NOW.isoformat()]
+        err = io.StringIO()
+        with contextlib.redirect_stdout(_FullDisk()), \
+                contextlib.redirect_stderr(err):
+            rc = main(argv)
+        self.assertEqual(rc, 74)
+        self.assertIn("output write failed", err.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

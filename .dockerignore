@@ -1,0 +1,20 @@
+# Keep the image to source + metadata only. Tests, docs, git, caches, and any
+# local evidence bundles never belong in a forensic tool's image.
+.git
+.github
+tests
+docs
+scripts
+*.md
+!README.md
+**/__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.mypy_cache
+.ruff_cache
+build
+dist
+*.egg-info
+bundle
+evidence

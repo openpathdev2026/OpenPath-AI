@@ -275,6 +275,24 @@ loads the rules, drives known activity, and checks the answers end to end.
 `scripts/collect_bundle.sh` snapshots a host into an offline evidence bundle.
 Large `audit.log` files are streamed, so memory stays bounded regardless of size.
 
+## Deployment (stateless batch CLI)
+
+OpenPath collects, answers, and exits — no daemon, no state, no network. A
+non-root, read-only-friendly `Containerfile` is provided; its entrypoint is the CLI
+and its `HEALTHCHECK` is the health probe:
+
+```
+openpath-ai --selfcheck   # host-independent health: collectors/contract/facets/pipeline; exit 0/non-zero
+openpath-ai --coverage    # host readiness: which questions THIS host can answer
+```
+
+`--selfcheck` also prints a deterministic contract fingerprint so an upgrade is
+verifiable. A source that is present but unreadable (root-only logs under a non-root
+run) is disclosed as UNREADABLE with a remedy — never a false "nothing happened" —
+and a failed output write exits cleanly (broken pipe → 141, IO error → 74). See
+`docs/DEPLOYMENT.md` for the full operational lifecycle (start/discover/persist/
+recover/upgrade/permission/health/readiness/restart/reboot/rotation/disk-full).
+
 ## Known limitations (disclosed, by design)
 
 - auditd syscall numbers are decoded per the record's `arch=` field; x86-64,
@@ -306,8 +324,10 @@ tests/
   unit/       # primitives (time, identity, saddr, struct)
   conformance/# the product-readiness baseline (synthetic real-format hosts)
   live/       # live checks against the real host filesystem
+  selfcheck.py# host-independent health probe (--selfcheck)
 scripts/      # collect_bundle.sh, live_conformance.sh
 contrib/      # openpath.rules (recommended auditd rules)
+Containerfile # non-root, zero-dep, read-only-friendly batch image (+ .dockerignore)
 docs/         # CLIENT-QUESTION-CATALOG, PRODUCTION-CATALOG, EVIDENCE-SOURCES,
-              # ARCHITECTURE, LIMITATIONS, TESTING (+ CHANGELOG at repo root)
+              # ARCHITECTURE, DEPLOYMENT, PRODUCTION-READINESS, LIMITATIONS, TESTING
 ```

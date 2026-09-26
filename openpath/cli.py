@@ -119,6 +119,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--coverage", action="store_true",
                    help="report which catalog questions this host can answer "
                         "(no subject needed) and exit")
+    p.add_argument("--selfcheck", action="store_true",
+                   help="run a host-independent health probe (collectors, contract, "
+                        "facets, pipeline) and exit 0 (healthy) / non-zero (broken) "
+                        "-- suitable for a container HEALTHCHECK / liveness probe")
     p.add_argument("--version", action="version", version=f"openpath-ai {__version__}")
     return p
 
@@ -189,7 +193,31 @@ def _resolve_window(args, env):
 
 
 def main(argv: Optional[list] = None) -> int:
+    try:
+        return _main(argv)
+    except BrokenPipeError:
+        # Output consumer went away (e.g. `| head`) or the write failed. Exit
+        # cleanly with a conventional code instead of dumping a traceback, and
+        # silence the interpreter's own flush-on-exit BrokenPipeError.
+        try:
+            sys.stdout.close()
+        except Exception:
+            pass
+        return 141  # 128 + SIGPIPE(13), the shell convention
+    except OSError as exc:
+        # A write that fails for another reason (e.g. ENOSPC -- disk full while
+        # writing a report to a mounted volume) must surface as a clear error and a
+        # non-zero exit, never a partial success or an opaque crash.
+        print(f"error: output write failed: {exc}", file=sys.stderr)
+        return 74  # EX_IOERR
+
+
+def _main(argv: Optional[list] = None) -> int:
     args = build_parser().parse_args(argv)
+
+    if args.selfcheck:
+        from openpath import selfcheck
+        return selfcheck.run()
 
     if args.list_families:
         for spec in FAMILIES:

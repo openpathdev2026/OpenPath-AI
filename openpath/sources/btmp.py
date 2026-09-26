@@ -32,6 +32,7 @@ class BtmpCollector(Collector):
     def collect(self, env: Env, window: TimeRange) -> CollectResult:
         records = []
         locations: List[str] = []
+        unreadable: List[str] = []
         scanned = 0
         unparseable = 0
         detail_bits: List[str] = []
@@ -39,12 +40,14 @@ class BtmpCollector(Collector):
             p = env.path(rel)
             if not p.exists():
                 continue
+            if not self._readable(p):
+                unreadable.append(str(p))     # present but unreadable, not "no records"
+                continue
             locations.append(str(p))
             try:
                 data = p.read_bytes()
             except OSError:
-                unparseable += 1
-                detail_bits.append(f"{rel}: unreadable")
+                unreadable.append(str(p))
                 continue
             recs, n, leftover = parse_utmp_bytes(data, rel)
             records.extend(recs)
@@ -52,6 +55,19 @@ class BtmpCollector(Collector):
             if leftover:
                 unparseable += 1
                 detail_bits.append(f"{rel}: {leftover}-byte truncated tail record")
+
+        if not locations and unreadable:
+            cov = SourceCoverage(
+                source_id=self.source_id, status=SourceStatus.UNREADABLE,
+                detail=(f"btmp present but unreadable: {', '.join(unreadable)} "
+                        f"-- likely insufficient privilege"),
+                locations=unreadable,
+                instrumentation=[InstrumentationCheck(
+                    "btmp accounting present", False,
+                    "btmp exists but could not be read; run with sufficient "
+                    "privilege (failed-login history otherwise undeterminable).")],
+            )
+            return CollectResult(events=[], coverage=cov)
 
         if not locations:
             cov = SourceCoverage(

@@ -299,15 +299,32 @@ class AuditdCollector(Collector):
 
     def collect(self, env: Env, window: TimeRange) -> CollectResult:
         rules = parse_audit_rules(env)
-        locs = self._resolve_locations(env)
+        locs, unreadable = self._resolve_locations(env)
         locations = [str(p) for _rel, p in locs]
 
         auditd_installed = (
             rules.present
             or bool(locations)
+            or bool(unreadable)
             or env.exists("sbin/auditd")
             or env.exists("usr/sbin/auditd")
         )
+
+        # Present-but-unreadable is NOT "empty": a root-only audit.log on a non-root
+        # run exists yet cannot be read. Reporting EMPTY there would be a false
+        # "auditd present, nothing happened" -- the worst kind of false negative,
+        # because Commands/Root-activity/Files/Network all rest on this source.
+        if not locs and unreadable:
+            cov = SourceCoverage(
+                source_id=self.source_id,
+                status=SourceStatus.UNREADABLE,
+                detail=(f"audit log(s) present but unreadable: {', '.join(unreadable)} "
+                        f"-- likely insufficient privilege"),
+                locations=unreadable,
+                instrumentation=self._instrumentation(rules, saw_execve=False,
+                                                       saw_net=False, saw_file=False),
+            )
+            return CollectResult(events=[], coverage=cov)
 
         if not locs:
             status = SourceStatus.ABSENT if not auditd_installed else SourceStatus.EMPTY
@@ -369,13 +386,23 @@ class AuditdCollector(Collector):
 
     # -- reading / grouping ------------------------------------------------- #
 
-    def _resolve_locations(self, env: Env) -> List[Tuple[str, "Path"]]:
-        out = []
+    def _resolve_locations(self, env: Env) -> Tuple[List[Tuple[str, "Path"]], List[str]]:
+        """Return (readable audit-log locations, paths present-but-unreadable).
+
+        Splitting the two lets ``collect`` disclose a permission failure as UNREADABLE
+        instead of silently dropping an unreadable file and reporting a false EMPTY.
+        """
+        out: List[Tuple[str, "Path"]] = []
+        unreadable: List[str] = []
         for rel in _AUDIT_LOG_PATHS:
             p = env.path(rel)
-            if p.exists():
+            if not p.exists():
+                continue
+            if self._readable(p):
                 out.append((rel, p))
-        return out
+            else:
+                unreadable.append(str(p))
+        return out, unreadable
 
     def _iter_groups(self, locations, stats=None):
         """Yield one :class:`_Group` at a time by streaming lines.

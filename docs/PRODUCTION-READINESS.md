@@ -28,11 +28,12 @@ for done-enough.
 | Freshness measurement | STRONG | per-source retention horizon + `freshness_seconds`/`is_stale` (age of newest record vs the analysis anchor), surfaced in `--coverage`; `test_freshness_and_staleness_measure`. A source with no timestamped record reports freshness `None`, never a fabricated "fresh". |
 | Capture latency | STRONG | every source is tagged `capture_mode` (`live` = observed now, or `export` = a journald dump) and the tag is surfaced in `--coverage`; an offline bundle stamps its own capture time (`captured-at` marker) and a window reaching past it discloses the not-yet-observed tail (`snapshot_shortfall`); `TestCaptureLatency`. Record *age* is never mistaken for capture staleness — a quiet live source stays a trustworthy negative. |
 | Log rotation handling | STRONG | reads rotated `.1` files; `retention_bounded` + `horizon_shortfalls()`; `test_event_split_across_rotation_is_reunited`; a genuine retention gap is disclosed, a merely-quiet log is not. |
-| Restart / recovery | STRONG (by design) | stateless CLI (collect → analyze → exit); no persistent state to corrupt or recover; a re-run is idempotent; `TestStreaming` proves bounded memory on large/rotated logs. |
+| Restart / recovery | STRONG (by design) | stateless CLI (collect → analyze → exit); no persistent state to corrupt or recover; a re-run is byte-identical (`TestResilience.test_rerun_is_idempotent`); a failed output write exits cleanly (broken pipe → 141, IO error → 74, `test_broken_pipe_exits_cleanly` / `test_output_ioerror_exits_nonzero_not_crash`) instead of half-succeeding; `TestStreaming` proves bounded memory on large/rotated logs. |
+| Permission-failure degradation | STRONG | a present-but-unreadable root-only source (`audit.log`/`wtmp`/`btmp` under a non-root run) is disclosed **UNREADABLE with a remedy**, never a false "nothing happened"; `Collector._readable` + `TestResilience.test_auditd_permission_denied_is_unreadable_not_false_negative`. |
 | Real-host validation | VALIDATED | `tests/live/test_live_host.py` runs every facet against the real `/` filesystem — no facet raises, every event cited, gaps disclosed; run on this container it parsed real `/etc/cron.d`, `/etc/group` (ubuntu in sudo/adm), `/etc/shadow` (`_apt` locked), `/proc/net`. *Caveat: a fully-instrumented, rule-loaded auditd host still needs an operator to drive `scripts/live_conformance.sh`.* |
 | Documentation parity | GOOD | docs generated from the contract; `test_docs_parity_with_contract` fails if `PRODUCTION-CATALOG.md` counts drift from `openpath.contract`; `test_scoreboard_renders_and_counts_match` checks the `--contract` output. |
 | Catalog completeness | GOOD | 153 questions are an output of an evidence-surface analysis; every collector maps to ≥1 certified question; the contract-completeness principle (below) forbids a permanent CONTRACTED. |
-| Container deployment | PARTIAL | runs anywhere Python 3 does; reads a captured evidence **bundle** or a live `/` under `--data-root`; `scripts/` bundles the surface. *Caveat: no packaged container image / long-running service lifecycle is shipped — it is a batch CLI, by design.* |
+| Container deployment | FUNCTIONAL | ships a non-root, read-only-friendly, zero-dependency `Containerfile` (entrypoint = CLI, `HEALTHCHECK`/CMD = `--selfcheck`), a host-independent health probe (`--selfcheck`: collectors/contract/facets/pipeline, exit 0/non-zero), host readiness (`--coverage`), and a verifiable contract fingerprint for upgrades; `docs/DEPLOYMENT.md` answers all twelve lifecycle questions; `TestDeployment` + `TestResilience`. *Caveat: the image is defined and its install/entrypoint validated, but building/publishing it (and any orchestration manifests) is left to the operator's registry/CI; it remains a batch CLI, by design — no daemon.* |
 
 ## Contract-completeness principle
 
@@ -163,10 +164,11 @@ remedied UNANSWERABLE without it:
 
 - 153 / 153 questions CERTIFIED (CONTRACTED 0).
 - 29 facets, 16 collectors, ~11k LOC, zero third-party dependencies (stdlib only).
-- 245 conformance tests green, including adversarial cases (wrong-user isolation,
+- 254 conformance tests green, including adversarial cases (wrong-user isolation,
   scoped-negative-not-absolute, provenance, path-boundary, contradictory flags,
   read-not-a-write, reply-tuple direction, bare-host disclosure, adversarial
-  attribution corpus, live-vs-snapshot capture latency).
+  attribution corpus, live-vs-snapshot capture latency, permission-denied
+  degradation, health-probe wiring, clean output-failure exits).
 
 ## How to reproduce
 
