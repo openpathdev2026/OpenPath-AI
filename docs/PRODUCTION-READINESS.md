@@ -23,8 +23,8 @@ for done-enough.
 | Area | Status | Evidence / caveat |
 |------|--------|-------------------|
 | Evidence conservation | STRONG | `records_scanned`/`unparseable` on all 16 collectors; `conservation_gaps()` surfaces any drop; `TestEvidenceConservation` (truncated wtmp tail, unparseable package/journal/cron/sudoers lines counted, consumed-source degrade). |
-| Attribution correctness | STRONG | auid-centric `Subject.matches` (survives sudo/su); `TestRootAttribution` + the adversarial `TestAttributionCorpus` (concurrent same-user sessions, multiple sudo chains that must not cross, nested su → login user, automation left unattributable); `TestMultiUserSweep` (no cross-attribution); wrong-user isolation in `TestQueryLayer`; TM-06 labels each action high/medium/low. Genuine ambiguity (overlapping direct root logins) is **disclosed, not guessed**. |
-| Session correlation | GOOD | audit `ses=` id now captured and used to group a user's concurrent sessions (`TestAttributionCorpus`); session intervals + overlap (IA-05), still-open (IA-04), reboot-terminated (SL-03), concurrent cross-user (TM-13). *Caveat: `ses` groups audited actions into sessions but is not yet bridged to the wtmp session's origin, so mapping one audited action to a specific overlapping wtmp session is disclosed as ambiguous rather than asserted.* |
+| Attribution correctness | STRONG | auid-centric `Subject.matches` (survives sudo/su); `TestRootAttribution` + the adversarial `TestAttributionCorpus` covering the full messy-case list: concurrent same-user sessions, multiple sudo chains that must not cross, nested su → login user, overlapping direct root logins (ambiguity **disclosed, not guessed**), a command run in a persistent screen/tmux pane **after logout** (still the base user, by immutable auid), and automation left unattributable; `TestMultiUserSweep` (no cross-attribution); wrong-user isolation in `TestQueryLayer`; TM-06 labels each action high/medium/low. |
+| Session correlation | STRONG (with a disclosed boundary) | audit `ses=` id captured and used to group a user's concurrent sessions; the adversarial cases above are proven (`TestAttributionCorpus`); session intervals + overlap (IA-05), still-open (IA-04), reboot-terminated (SL-03), concurrent cross-user (TM-13). *Boundary (disclosed, not silently assumed): `ses` groups audited actions into sessions but is not bridged to the wtmp session's origin, so mapping one audited action to a specific overlapping wtmp login is reported as ambiguous rather than asserted — the honest limit, since no deterministic on-host link exists.* |
 | Freshness measurement | STRONG | per-source retention horizon + `freshness_seconds`/`is_stale` (age of newest record vs the analysis anchor), surfaced in `--coverage`; `test_freshness_and_staleness_measure`. A source with no timestamped record reports freshness `None`, never a fabricated "fresh". |
 | Capture latency | STRONG | every source is tagged `capture_mode` (`live` = observed now, or `export` = a journald dump) and the tag is surfaced in `--coverage`; an offline bundle stamps its own capture time (`captured-at` marker) and a window reaching past it discloses the not-yet-observed tail (`snapshot_shortfall`); `TestCaptureLatency`. Record *age* is never mistaken for capture staleness — a quiet live source stays a trustworthy negative. |
 | Log rotation handling | STRONG | reads rotated `.1` files; `retention_bounded` + `horizon_shortfalls()`; `test_event_split_across_rotation_is_reunited`; a genuine retention gap is disclosed, a merely-quiet log is not. |
@@ -84,6 +84,26 @@ This is a per-source *and* per-bundle answer to "what is the lifecycle from acti
 to answer": a live host is queryable within collector latency (seconds); a bundle is
 queryable up to its stamped capture instant, and everything after is disclosed as
 unobserved rather than silently reported as quiet.
+
+### Per-source lifecycle (live host)
+
+Where each source sits on "event generated → visible to OpenPath → queryable". On a
+**live** run all latencies are effectively the source's own write latency (OpenPath
+reads the artifact directly at analysis time); on a **bundle** every row is instead
+bounded by the capture instant (above).
+
+| Source | Event generated → recorded | Visible to OpenPath | Notes |
+|--------|----------------------------|---------------------|-------|
+| `audit.log` | kernel emits the audit event; `auditd` writes it (sub-second, subject to its flush/backlog) | immediate on the next run (direct read) | the freshest source; drives Commands/Root/Files/Network |
+| journald (`journal.sshd`, `journald`) | logged to the journal (sub-second) | only after a JSON export — live `journalctl` at analysis time (fresh) or a bundle dump (as-of capture) | the one source with a real extra export step → tagged `capture_mode=export` when read from a dump |
+| `auth.log` / `secure` | syslog writes the auth line (sub-second) | immediate on the next run (direct read) | login/sudo auth detail |
+| `wtmp` / `btmp` | written on login/logout/boot / failed login | immediate on the next run (direct read) | event-driven, not continuous |
+| cron / systemd units (`persistence`) | the schedule *file/unit* reflects current state whenever changed | immediate (state snapshot, stamped at read time) | a job's *establishment* is now-state; a job's *run* is only queryable if it emitted an audit exec or journal line |
+| `/etc/shadow`, sudoers, groups (`authz`) | the file reflects current account state whenever changed | immediate (state snapshot, stamped at read time) | the *change act* is queryable only via an audit write-watch on the file |
+
+State-snapshot sources (persistence/authz) describe the present by construction, so
+their freshness is ~0 and "not yet observed" never applies to them; the distinction
+matters for the event-log sources above.
 
 ## What CERTIFIED means (and does not)
 
@@ -164,11 +184,12 @@ remedied UNANSWERABLE without it:
 
 - 153 / 153 questions CERTIFIED (CONTRACTED 0).
 - 29 facets, 16 collectors, ~11k LOC, zero third-party dependencies (stdlib only).
-- 254 conformance tests green, including adversarial cases (wrong-user isolation,
+- 263 conformance tests green, including adversarial cases (wrong-user isolation,
   scoped-negative-not-absolute, provenance, path-boundary, contradictory flags,
-  read-not-a-write, reply-tuple direction, bare-host disclosure, adversarial
-  attribution corpus, live-vs-snapshot capture latency, permission-denied
-  degradation, health-probe wiring, clean output-failure exits).
+  read-not-a-write, reply-tuple direction, bare-host disclosure, the full
+  adversarial attribution corpus incl. post-logout screen/tmux, live-vs-snapshot
+  capture latency, permission-denied degradation, health-probe wiring, clean
+  output-failure exits).
 
 ## How to reproduce
 

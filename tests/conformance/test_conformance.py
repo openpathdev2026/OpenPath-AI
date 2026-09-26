@@ -2750,6 +2750,28 @@ class TestAttributionCorpus(Base):
         self.assertIn("one of", (attr.origin or ""))     # ambiguity disclosed
         self.assertIn("ambiguous", attr.detail)
 
+    def test_action_via_persistent_multiplexer_after_logout_attributed_by_auid(self):
+        # screen/tmux: alice's interactive login ends, but a command runs later in a
+        # still-attached multiplexer pane. auid is immutable and inherited, so the
+        # command is STILL hers even though her wtmp session has closed -- the messy
+        # "action after logout" case must not become unattributed or misattributed.
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.enable_execve()
+        h.login("alice", ago(hours=5), line="pts/0", host="10.0.0.5", until=ago(hours=3))
+        # command at hours=2 -- AFTER the wtmp session closed at hours=3
+        h.exec(1001, 1001, ["curl", "http://x"], "/usr/bin/curl", ago(hours=2),
+               comm="curl", ses=10, tty="pts0")
+        h.write()
+        f = self.finding(root, "alice", "commands")
+        curls = [e for e in f.events if e.attrs.get("comm") == "curl"]
+        self.assertTrue(curls, "post-logout multiplexer command not attributed to alice")
+        self.assertTrue(all(e.auid == 1001 for e in curls))
+        # And it is NOT falsely attributed to anyone else / left unowned.
+        other = self.finding(root, "root", "commands")
+        self.assertFalse([e for e in other.events if e.attrs.get("comm") == "curl"])
+
     def test_automation_is_unattributable_not_blamed(self):
         root = self.make_root()
         h = HostBuilder(root)
