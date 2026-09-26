@@ -5,7 +5,7 @@ The full set of user-facing forensic questions OpenPath commits to, each with a
 count is an output of the analysis, not a target. Certification is a property of
 a question, not a limit on which questions exist.
 
-**153 questions** — CERTIFIED 135, CONTRACTED 18.
+**153 questions** — CERTIFIED 138, CONTRACTED 15.
 
 - **CERTIFIED** — wired and proven end-to-end today (see `catalog.py` + the
   conformance suite). Complete *within the covered evidence scope*, never absolute.
@@ -74,6 +74,7 @@ a question, not a limit on which questions exist.
 | FS-09 | Who modified a specific file (e.g. who changed /etc/shadow or /etc/sudoers)? | `files` | auditd(host-wide file-change rule), auditd(file watch/modify audit rule), wtmp |
 | FS-10 | When did {user}'s file changes occur relative to the incident (file-activity timeline)? | `timeline` | auditd(host-wide file-change rule), auditd(file watch/modify audit rule), wtmp |
 | FS-11 | Did file changes occur with no interactive session behind them (unattended, automated, cron/daemon-driven)? | `files` | auditd(host-wide file-change rule), auditd(file watch/modify audit rule), wtmp |
+| FS-14 | Did {user} modify files they do not own or that fall outside their normal scope (another user's data, system-owned files)? | `files` | filesystem ownership/state baseline collector, auditd(host-wide file-change rule) |
 | IA-01 | How did {user} authenticate (password, public key, or another method)? | `login` | journal.sshd, auth |
 | IA-02 | Did {user} fail to authenticate — how many failed attempts, and from where? | `login` | btmp, journal.sshd, auth |
 | IA-03 | Did {user} access the host locally (console) or remotely (network)? | `sessions` | wtmp, journal.sshd |
@@ -150,6 +151,7 @@ a question, not a limit on which questions exist.
 | SP-15 | Can we confirm {user} did NOT install or alter any persistence in the window (a clean-bill scoped negative)? | `persistence` | cron collector, systemd-unit collector, auditd(execve audit rule), auditd(host-wide file-change rule), auditd, auth |
 | SP-16 | What persistence-related actions did {user} take immediately before and after the incident? | `persistence` | auditd, auditd(execve audit rule), auditd(host-wide file-change rule), auth, wtmp |
 | TM-01 | Give me a full chronological timeline of everything {user} did in the window, in order. | `timeline` | auditd, wtmp, auth, packages, journal.sshd, btmp |
+| TM-02 | What did {user} do during a specific login session (the session on tty X that started at T)? | `commands` | wtmp, auditd, auth, journal.sshd, packages |
 | TM-04 | When did {user} first and last appear in the window, and how long were they active (dwell time)? | `timeline` | wtmp, auditd, auth, journal.sshd, packages, btmp |
 | TM-05 | Was unattributable activity caused by a scheduled task or service (cron/systemd timer/unit), and which one? | `root_activity` | cron/timer/unit collector, auditd |
 | TM-07 | Who is the human responsible for a specific action (a command, file change, connection, or account/group change), across sudo/su? | `root_activity` | auditd, auth, wtmp, journal.sshd |
@@ -158,19 +160,18 @@ a question, not a limit on which questions exist.
 | TM-10 | Is this host instrumented to answer forensic questions about {user} over the window (readiness / coverage)? | `gaps` | auditd, wtmp, btmp, journal.sshd, auth, packages |
 | TM-11 | How far back does the evidence reach for {user} — does coverage actually span the incident time? | `gaps` | wtmp, auditd, auth, packages, btmp, journal.sshd |
 | TM-12 | Were any evidence records dropped, truncated, or unparseable (is the record set intact)? | `gaps` | auditd, wtmp, btmp, journal.sshd, auth, packages |
+| TM-14 | Were there periods when {user} was demonstrably present but their activity is invisible to us? | `gaps` | wtmp, auth, auditd, journal.sshd |
 
 ## CONTRACTED (roadmap)
 
-### Needs: query/filter/pivot layer shipped (openpath/query.py); per-question certification test pending  (6)
+### Needs: query/filter/pivot layer shipped (openpath/query.py); per-question certification test pending  (4)
 
 | ID | Question | Facet | Blind spots |
 |----|----------|-------|-------------|
 | FS-12 | What sensitive files did {user} read or access, not modify (reading /etc/shadow, SSH keys, credential stores)? | files | Reads captured ONLY when a read-perm watch (-w -p r) fires, and even then typed FILE_CHANGE op=openat (read vs write not distinguished); ... |
-| TM-02 | What did {user} do during a specific login session (the session on tty X that started at T)? | timeline | No pid→sid→session-leader lineage: concurrent same-user sessions cannot be separated; the session→action binding is by timestamp overlap ... |
 | TM-03 | What changed on the host between time T1 and T2 (across all users)? | core | Only subjects discoverable from passwd or the evidence are enumerated; config/state changes with no audited syscall (cron, sudoers, firew... |
 | TM-06 | Which of {user}'s recorded actions are attributable to them with high confidence, and how? | core | auid is the only true auid-centric key (survives sudo/su); auth/wtmp/journal.sshd attribute by name; packages by 30-min correlation — eac... |
 | TM-13 | What were OTHER users doing around the time of {user}'s action (concurrent/lateral activity)? | core | Only users discoverable from passwd/evidence are enumerated; correlation is temporal co-occurrence, NOT proof of coordination; no cross-h... |
-| TM-14 | Were there periods when {user} was demonstrably present but their activity is invisible to us? | gaps | No facet computes 'session minus visibility' as a bounded interval; no idle-vs-active distinction within a session (no keystroke/tty-acti... |
 
 ### Needs: DNS/resolver query-log collector (systemd-resolved via general journald, dnsmasq/unbound/BIND query logs, or packet-level DNS)  (1)
 
@@ -207,12 +208,6 @@ a question, not a limit on which questions exist.
 | ID | Question | Facet | Blind spots |
 |----|----------|-------|-------------|
 | FS-13 | What exactly changed inside a modified file (content, before/after diff, which lines/keys)? | NEW:file_integrity | auditd records syscall metadata (path/op/actor/time), never file bytes — no content, hashes, size deltas, or line-level diff anywhere in ... |
-
-### Needs: filesystem ownership/state baseline collector (stat-tree snapshot: owner uid/gid, mode, inode; or FIM baseline)  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| FS-14 | Did {user} modify files they do not own or that fall outside their normal scope (another user's data, system-owned files)? | NEW:fs_baseline | The WRITER is auditd-attributable and a path-prefix heuristic ('changes outside /home/{user}') is answerable, but the true OWNER of a tar... |
 
 ### Needs: firewall-log collector (nftables/iptables LOG/NFLOG output via kernel log or general journald)  (1)
 

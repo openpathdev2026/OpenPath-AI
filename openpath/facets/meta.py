@@ -270,6 +270,29 @@ class GapsFacet(Facet):
             for n in ctx.subject.resolution_notes:
                 f.notes.append(f"  - {n}")
 
+        # 4b. TM-14: periods the subject was demonstrably PRESENT (an open/known
+        # login session) yet produced no recorded activity -- an interactive-only or
+        # unaudited-activity blind window, stated deterministically per session.
+        from openpath.model.event import EventType as _ET
+        sessions = ctx.subject_events([_ET.SESSION])
+        acts = ctx.subject_events([_ET.EXEC, _ET.FILE_CHANGE, _ET.NETWORK,
+                                   _ET.PRIVILEGE_ESCALATION])
+        blind_windows = 0
+        for s in sessions:
+            end = s.ts_end or ctx.window.end
+            if not any(s.ts <= a.ts <= end for a in acts):
+                blind_windows += 1
+                f.notes.append(
+                    f"[TM-14 present-but-invisible] {ctx.subject.username} held a "
+                    f"session on {s.attrs.get('line')} from {s.attrs.get('origin')} "
+                    f"[{s.ts.isoformat()} .. "
+                    f"{s.ts_end.isoformat() if s.ts_end else 'now'}] with NO recorded "
+                    f"command/file/network activity -- present but invisible "
+                    f"(interactive-only shell, or activity not audited).")
+        if sessions and not acts:
+            f.notes.append("[TM-14] the subject was logged in but no activity of any "
+                           "audited class was recorded for them in the window.")
+
         # 5. Standing blind spots: whole classes of evidence OpenPath models no
         # collector for. Naming them keeps "Gaps" from hiding unknown-unknowns --
         # its completeness is explicitly bounded to the modeled source set.

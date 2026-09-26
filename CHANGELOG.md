@@ -6,6 +6,15 @@ based on Keep a Changelog; dates are UTC.
 ## [Unreleased]
 
 ### Added
+- **Scope, session-window, and visibility questions (138 total).** FS-14: the
+  files facet flags modifications outside the subject's home scope (system dirs,
+  another user's home), disclosed as a path heuristic (exact ownership needs a
+  filesystem baseline). TM-02: session-scoped activity via the `--tty` pivot
+  (combined with a time window) isolates what a user did in one login session.
+  TM-14: the Gaps facet now reports present-but-invisible windows -- a login
+  session during which the subject produced no recorded command/file/network
+  activity (an interactive-only or unaudited-activity blind interval). Proven in
+  `TestScopeSessionVisibility`.
 - **Process ancestry, shell history, and firewall (135 total).** EX-11: a
   process-ancestry facet reconstructs the parent process and exec chain of a user's
   commands from the ``pid``/``ppid`` auditd already records -- linking a child's

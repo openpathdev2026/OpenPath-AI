@@ -78,9 +78,30 @@ class FilesFacet(Facet):
             if p:
                 paths.append(p)
         opsum = ", ".join(f"{v} {k}" for k, v in sorted(by_op.items()))
+        # FS-14: changes outside the subject's own scope -- not under their home dir
+        # (another user's home, /etc, or a system directory). A path-based heuristic,
+        # disclosed as such (true ownership needs a filesystem baseline).
+        home = f"/home/{ctx.subject.username}"
+        out_of_scope = [
+            e for e in changes
+            if (p := (e.attrs.get("path") or "")) and not (
+                p == home or p.startswith(home + "/")
+                or p.startswith("/tmp/") or p.startswith(f"/home/{ctx.subject.username}."))
+        ]
+        other_home = [e for e in out_of_scope
+                      if (e.attrs.get("path") or "").startswith("/home/")]
         f.summary = (
-            f"{ctx.subject.username} changed {len(changes)} file(s) ({opsum})."
-        )
+            f"{ctx.subject.username} changed {len(changes)} file(s) ({opsum})"
+            + (f"; {len(out_of_scope)} outside their home scope"
+               + (f" ({len(other_home)} in another user's home)" if other_home else "")
+               if out_of_scope else "")
+            + ".")
+        for e in out_of_scope:
+            f.notes.append(f"[out-of-scope] {ctx.subject.username} modified "
+                           f"{e.attrs.get('path')} (outside {home})")
+        if out_of_scope:
+            f.notes.append("[scope] out-of-scope is a path heuristic (not under the "
+                           "user's home); exact ownership needs a filesystem baseline.")
         for e in changes:
             root = " (as root)" if (e.uid == 0 or e.attrs.get("euid") == 0) else ""
             f.notes.append(

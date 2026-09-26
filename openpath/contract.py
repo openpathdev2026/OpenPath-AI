@@ -203,7 +203,7 @@ PRODUCTION_CONTRACT: List[ContractQuestion] = [
                      'NEW:file_integrity', _K, 'file-integrity / content-baseline collector (AIDE/tripwire DB, content-capturing FIM, backup/snapshot diffs, or git/etckeeper history of /etc)',
                      ('file-integrity / content-baseline collector', 'auditd(host-wide file-change rule)'), 'auditd records syscall metadata (path/op/actor/time), never file bytes — no content, hashes, size deltas, or line-level diff anywhere in the six sources.'),
     ContractQuestion('FS-14', "Did {user} modify files they do not own or that fall outside their normal scope (another user's data, system-owned files)?",
-                     'NEW:fs_baseline', _K, 'filesystem ownership/state baseline collector (stat-tree snapshot: owner uid/gid, mode, inode; or FIM baseline)',
+                     'files', _C, '',
                      ('filesystem ownership/state baseline collector', 'auditd(host-wide file-change rule)'), "The WRITER is auditd-attributable and a path-prefix heuristic ('changes outside /home/{user}') is answerable, but the true OWNER of a target is not captured by any source."),
     ContractQuestion('IA-01', 'How did {user} authenticate (password, public key, or another method)?',
                      'login', _C, '',
@@ -464,7 +464,7 @@ PRODUCTION_CONTRACT: List[ContractQuestion] = [
                      'timeline', _C, '',
                      ('auditd', 'wtmp', 'auth', 'packages', 'journal.sshd', 'btmp'), 'Ordering is by timestamp only — no causal/parent-child sequencing; sub-second/clock-skewed events may misorder; non-sshd service and cron-driven steps are absent (disclosed as gaps).'),
     ContractQuestion('TM-02', 'What did {user} do during a specific login session (the session on tty X that started at T)?',
-                     'timeline', _K, 'query/filter/pivot layer shipped (openpath/query.py); per-question certification test pending',
+                     'commands', _C, '',
                      ('wtmp', 'auditd', 'auth', 'journal.sshd', 'packages'), 'No pid→sid→session-leader lineage: concurrent same-user sessions cannot be separated; the session→action binding is by timestamp overlap only; daemon actions in the interval are not part of the session.'),
     ContractQuestion('TM-03', 'What changed on the host between time T1 and T2 (across all users)?',
                      'core', _K, 'query/filter/pivot layer shipped (openpath/query.py); per-question certification test pending',
@@ -500,7 +500,7 @@ PRODUCTION_CONTRACT: List[ContractQuestion] = [
                      'core', _K, 'query/filter/pivot layer shipped (openpath/query.py); per-question certification test pending',
                      ('auditd', 'wtmp', 'auth', 'packages', 'journal.sshd', 'btmp'), 'Only users discoverable from passwd/evidence are enumerated; correlation is temporal co-occurrence, NOT proof of coordination; no cross-host view so lateral movement TO another machine is invisible; clock skew shifts co-occurrence.'),
     ContractQuestion('TM-14', 'Were there periods when {user} was demonstrably present but their activity is invisible to us?',
-                     'gaps', _K, 'query/filter/pivot layer shipped (openpath/query.py); per-question certification test pending',
+                     'gaps', _C, '',
                      ('wtmp', 'auth', 'auditd', 'journal.sshd'), "No facet computes 'session minus visibility' as a bounded interval; no idle-vs-active distinction within a session (no keystroke/tty-activity evidence); a present-but-silent user is indistinguishable from a present-but-unrecorded one except via the instrumentation gaps."),
 ]
 
