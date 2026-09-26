@@ -97,8 +97,15 @@ def prefer_primary(ctx: AnalysisContext, events: List[Event], *,
     """Drop auth-log duplicates of exec/privilege when auditd already covers them.
 
     auditd is the more complete source; on a host running both auditd and syslog
-    the same sudo command appears in each. When auditd authoritatively covers the
-    relevant activity we drop the ``auth`` copies to avoid double counting.
+    the same *successful* sudo command appears in each, so we drop the ``auth`` copy
+    to avoid double counting.
+
+    A **failed / denied** escalation (``res == "failed"`` -- "user NOT in sudoers",
+    a wrong password, a command not allowed) is the exception: the command never
+    executed, so auditd's execve rule records nothing for it. Its ONLY record is the
+    auth-log line. Dropping that would silently lose a denied privilege attempt on
+    an auditd host -- an evidence-conservation violation and a security-relevant
+    false negative -- so those auth events are always kept.
     """
     auditd = ctx.ledger.get("auditd")
     if auditd is None or auditd.status not in (
@@ -108,7 +115,8 @@ def prefer_primary(ctx: AnalysisContext, events: List[Event], *,
     instrument = "execve audit rule" if need_execve else "auditd rules loaded"
     if not auditd.has_instrument(instrument):
         return events
-    return [e for e in events if e.source_id != "auth"]
+    return [e for e in events
+            if e.source_id != "auth" or e.attrs.get("res") == "failed"]
 
 
 def check_prereqs(ctx: AnalysisContext, requirements: Sequence) -> List[Gap]:

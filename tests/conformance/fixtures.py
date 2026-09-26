@@ -398,10 +398,17 @@ class HostBuilder:
                          f"INFO {verb}: {nevra}")
         return self
 
-    def dpkg(self, action, pkg, vfrom, vto, at):
+    def dpkg(self, action, pkg, vfrom, vto, at, arch="amd64"):
+        # Real dpkg.log uses "<none>" for an absent version (fresh install has no
+        # from-version; a remove has no to-version) and a pkg:arch qualifier -- never
+        # an empty field. Emit that faithfully so the line matches what dpkg actually
+        # writes (and what the collector parses).
+        vfrom = vfrom or "<none>"
+        vto = vto or "<none>"
+        name = pkg if ":" in pkg else f"{pkg}:{arch}"
         self._dpkg.append(
             f"{at.astimezone(self.tz).strftime('%Y-%m-%d %H:%M:%S')} "
-            f"{action} {pkg} {vfrom} {vto}")
+            f"{action} {name} {vfrom} {vto}")
         return self
 
     # -- persistence state (cron / systemd / linger / legacy startup) ------- #

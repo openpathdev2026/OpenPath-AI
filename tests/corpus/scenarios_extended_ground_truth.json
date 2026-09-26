@@ -1,0 +1,55 @@
+[
+  {"id": "EXT-01-failed-login", "description": "alice had a failed SSH login from 198.51.100.9 before her successful key login.",
+   "user": "alice", "facet": "login", "window": "last 24 hours",
+   "expect": {"confidence": "certified", "min_events": 1, "events_contain": ["198.51.100.9"]}},
+
+  {"id": "EXT-02-console-login", "description": "carol logged in at the local console (tty1).",
+   "user": "carol", "facet": "login", "window": "last 24 hours",
+   "expect": {"min_events": 1, "events_contain": ["tty1"]}},
+
+  {"id": "EXT-03-faillock", "description": "carol's account tripped faillock (consecutive login failures).",
+   "user": "carol", "facet": "login", "window": "last 24 hours",
+   "expect": {"min_events": 1, "events_contain": ["faillock"]}},
+
+  {"id": "EXT-04-overlapping-sessions", "description": "alice had two sessions from the same host; one closed, one still open (overlap).",
+   "user": "alice", "facet": "sessions", "window": "last 24 hours",
+   "expect": {"confidence": "certified", "min_events": 2, "events_contain": ["open", "closed"], "actor": "alice"}},
+
+  {"id": "EXT-05-sudo-i", "description": "alice opened a root shell via sudo (sudo -i / sudo bash).",
+   "user": "alice", "facet": "privilege", "window": "last 24 hours",
+   "expect": {"confidence": "certified", "min_events": 1, "events_contain": ["sudo"]}},
+
+  {"id": "EXT-06-denied-sudo", "description": "carol's sudo was DENIED (not in sudoers) — a failed escalation attempt.",
+   "user": "carol", "facet": "privilege", "window": "last 24 hours",
+   "expect": {"min_events": 1, "events_contain": ["failed"]}},
+
+  {"id": "EXT-07-file-ops-full-set", "description": "alice (as root) created, deleted, renamed, chmod'd, chown'd, and truncated files.",
+   "user": "alice", "facet": "files", "window": "last 24 hours",
+   "expect": {"confidence": "certified", "min_events": 6,
+     "events_contain": ["creat", "unlink", "rename", "chmod", "chown", "truncate"],
+     "events_absent": ["/etc/never-touched"]}},
+
+  {"id": "EXT-08-apt-install", "description": "curl was installed via apt/dpkg.",
+   "facet": "packages", "actor_mode": "any", "window": "last 24 hours",
+   "expect": {"min_events": 1, "events_contain": ["curl"]}},
+
+  {"id": "EXT-09-apt-remove", "description": "telnet was removed via apt/dpkg.",
+   "facet": "packages", "actor_mode": "any", "window": "last 24 hours",
+   "expect": {"min_events": 1, "events_contain": ["telnet"], "events_absent": ["apache2"]}},
+
+  {"id": "EXT-10-inbound-bind", "description": "alice bound an inbound listener on 0.0.0.0:8080.",
+   "user": "alice", "facet": "network", "window": "last 24 hours",
+   "expect": {"confidence": "certified", "min_events": 1, "events_contain": ["8080"]}},
+
+  {"id": "EXT-11-at-persistence", "description": "an at-job is scheduled (a0000042).",
+   "facet": "persistence", "actor_mode": "any", "window": "last 24 hours",
+   "expect": {"min_events": 1, "events_contain": ["at job"]}},
+
+  {"id": "EXT-12-systemd-timer-persistence", "description": "an enabled systemd timer (backup.timer) is present.",
+   "facet": "persistence", "actor_mode": "any", "window": "last 24 hours",
+   "expect": {"min_events": 1, "events_contain": ["backup.timer"]}},
+
+  {"id": "EXT-13-rc-local-persistence", "description": "a legacy rc.local startup script is present.",
+   "facet": "persistence", "actor_mode": "any", "window": "last 24 hours",
+   "expect": {"min_events": 1, "events_contain": ["rc.local"]}}
+]

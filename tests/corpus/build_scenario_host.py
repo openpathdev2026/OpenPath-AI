@@ -64,6 +64,54 @@ def build(root: Path, now: datetime) -> Path:
     return root
 
 
+def build_extended(root: Path, now: datetime) -> Path:
+    """A broader host covering activity categories/variants beyond the base ten:
+    auth methods (failed, console, faillock), privilege variants (sudo -i, failed
+    sudo), the full file-op set (create/delete/rename/chmod/chown/truncate), apt/dpkg
+    packages, inbound network, overlapping + still-open sessions, and more
+    persistence types (at, systemd timer, rc.local). Uses existing fixtures only —
+    no new questions or collectors."""
+    def ago(**kw):
+        return now - timedelta(**kw)
+
+    h = HostBuilder(root)
+    h.passwd("root", 0).passwd("alice", 1001).passwd("carol", 1003)
+    h.enable_execve().enable_network().enable_file_syscalls().watch("/etc", "wa", "etc")
+    h.boot(ago(hours=8))
+    # -- authentication variants --
+    h.failed_login("alice", ago(hours=6), host="198.51.100.9")          # failed login
+    h.ssh_fail("alice", "198.51.100.9", ago(hours=6))
+    h.ssh_accept("alice", "203.0.113.7", ago(hours=5, minutes=1))       # key login
+    h.login("alice", ago(hours=5), line="pts/0", host="203.0.113.7", until=ago(hours=2))
+    h.login("carol", ago(hours=5), line="tty1", host="")               # console login
+    h.faillock("carol", ago(hours=4, minutes=50))                       # lockout
+    # -- overlapping + still-open sessions --
+    h.login("alice", ago(hours=4), line="pts/1", host="203.0.113.7")   # still open (overlaps pts/0)
+    # -- privilege variants --
+    h.sudo(1001, 0, "/bin/bash -i", ago(hours=4, minutes=40))          # sudo -i (root shell)
+    h.exec(1001, 0, ["bash", "-i"], "/bin/bash", ago(hours=4, minutes=40), euid=0,
+           comm="bash")
+    h.auth_sudo_fail("carol", ago(hours=4, minutes=30))                # failed sudo
+    # -- full file-op set (as root, attributed to alice) --
+    h.file_change(1001, 0, "creat", "/etc/newfile.conf", ago(hours=4, minutes=20), euid=0, key="etc")
+    h.file_change(1001, 0, "unlink", "/etc/oldfile.conf", ago(hours=4, minutes=19), euid=0, key="etc")
+    h.file_change(1001, 0, "rename", "/etc/a.conf", ago(hours=4, minutes=18), euid=0, key="etc")
+    h.file_change(1001, 0, "chmod", "/etc/shadow", ago(hours=4, minutes=17), euid=0, key="etc")
+    h.file_change(1001, 0, "chown", "/etc/passwd", ago(hours=4, minutes=16), euid=0, key="etc")
+    h.file_change(1001, 0, "truncate", "/var/log/wtmp", ago(hours=4, minutes=15), euid=0, key="etc")
+    # -- packages: apt/dpkg install + remove --
+    h.dpkg("install", "curl", "", "7.88.1-10", ago(hours=4, minutes=10))
+    h.dpkg("remove", "telnet", "0.17-44", "", ago(hours=4, minutes=9))
+    # -- network: inbound bind/listen --
+    h.bind(1001, 0, "0.0.0.0", 8080, ago(hours=4), comm="nginx")
+    # -- persistence variants --
+    h.at_job("a0000042")
+    h.systemd_timer("backup.timer", "*-*-* 02:00:00", enabled=True)
+    h.rc_local("/opt/agent/start.sh")
+    h.write()
+    return root
+
+
 def main(argv=None) -> int:
     argv = argv if argv is not None else sys.argv[1:]
     if not argv:

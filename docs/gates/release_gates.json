@@ -1,0 +1,169 @@
+{
+  "generated": "2026-09-26T15:33:44.994188+00:00",
+  "verdict": "NOT READY",
+  "gates": [
+    {
+      "gate": "A",
+      "title": "Truth Corpus",
+      "status": "GREEN",
+      "checks": [
+        {
+          "name": "base 10-scenario corpus matches",
+          "ok": true,
+          "evidence": "10/10 matched"
+        },
+        {
+          "name": "extended category corpus matches",
+          "ok": true,
+          "evidence": "13/13 matched"
+        },
+        {
+          "name": "corpus detects a false claim (discriminates)",
+          "ok": true,
+          "evidence": "seeded false claim flagged=True"
+        },
+        {
+          "name": "total scenarios across categories >= 20",
+          "ok": true,
+          "evidence": "23 scenarios"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "gate": "B",
+      "title": "Attribution Certification",
+      "status": "GREEN",
+      "checks": [
+        {
+          "name": "attribution + red-team suites green",
+          "ok": true,
+          "evidence": "23 tests, 0 failing"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "gate": "C",
+      "title": "Container Lifecycle Validation",
+      "status": "RED",
+      "checks": [
+        {
+          "name": "Containerfile present",
+          "ok": true,
+          "evidence": "Containerfile"
+        },
+        {
+          "name": "pinned base image (FROM ... :tag)",
+          "ok": true,
+          "evidence": "FROM python:3.12-slim"
+        },
+        {
+          "name": "runs non-root (USER)",
+          "ok": true,
+          "evidence": "USER 65532"
+        },
+        {
+          "name": "declares HEALTHCHECK",
+          "ok": true,
+          "evidence": "HEALTHCHECK --selfcheck"
+        },
+        {
+          "name": "declares ENTRYPOINT",
+          "ok": true,
+          "evidence": "ENTRYPOINT python -m openpath"
+        },
+        {
+          "name": "no remote ADD (supply-chain footgun)",
+          "ok": true,
+          "evidence": "no ADD http"
+        },
+        {
+          "name": "build-time self-check guard",
+          "ok": true,
+          "evidence": "selfcheck in build"
+        },
+        {
+          "name": "health probe HEALTHY (container HEALTHCHECK)",
+          "ok": true,
+          "evidence": "5/5 probes pass"
+        },
+        {
+          "name": "restart is idempotent (stateless \u2014 identical health)",
+          "ok": true,
+          "evidence": "two selfcheck runs identical"
+        },
+        {
+          "name": "upgrade is verifiable (contract fingerprint stable)",
+          "ok": true,
+          "evidence": "fingerprint 109709966e2b == frozen"
+        }
+      ],
+      "blockers": [
+        {
+          "what": "OCI image build + run + restart + upgrade on a real runtime",
+          "why": "no container daemon available in this environment (docker info fails / not installed)",
+          "closing_command": "docker build -f Containerfile -t openpath-ai:v1 . && docker run --rm openpath-ai:v1 --selfcheck  (then restart + pull-new-tag upgrade, re-run --selfcheck)"
+        }
+      ]
+    },
+    {
+      "gate": "D",
+      "title": "30-Day Host Trial",
+      "status": "RED",
+      "checks": [
+        {
+          "name": "burst completed without cycle errors",
+          "ok": true,
+          "evidence": "40/40 cycles, 0 errors"
+        },
+        {
+          "name": "no collector failures",
+          "ok": true,
+          "evidence": "collector_failures=0"
+        },
+        {
+          "name": "memory does not grow unbounded (no leak signature)",
+          "ok": true,
+          "evidence": "RSS drift 16 KiB, peak 24720 KiB"
+        },
+        {
+          "name": "bounded latency",
+          "ok": true,
+          "evidence": "latency {'min': 0.0192, 'max': 0.0315, 'mean': 0.0236}"
+        }
+      ],
+      "blockers": [
+        {
+          "what": "30-day CONTINUOUS trial (the irreducible wall-clock duration)",
+          "why": "a bounded burst was measured here; 30 days of runtime cannot elapse in a session and must not be simulated or assumed",
+          "closing_command": "schedule scripts/host_trial.py under a systemd-timer/cron for 30 days, appending JSON; assert stability across the run"
+        }
+      ]
+    },
+    {
+      "gate": "E",
+      "title": "Independent Reproduction",
+      "status": "RED",
+      "checks": [
+        {
+          "name": "reproduce.sh present + executable",
+          "ok": true,
+          "evidence": "scripts/reproduce.sh"
+        },
+        {
+          "name": "REPRODUCTION.md protocol present",
+          "ok": true,
+          "evidence": "docs/REPRODUCTION.md"
+        }
+      ],
+      "blockers": [
+        {
+          "what": "reproduction by a DIFFERENT HUMAN operator in a fresh environment",
+          "why": "clean-clone mechanical reproduction is executed here, but 'independent' requires a third party with no tribal knowledge; that attestation cannot be self-produced",
+          "closing_command": "a second engineer clones the repo on their own machine and runs ./scripts/reproduce.sh, recording REPRODUCTION: OK"
+        }
+      ]
+    }
+  ]
+}

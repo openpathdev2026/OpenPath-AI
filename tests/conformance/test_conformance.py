@@ -3571,6 +3571,23 @@ class TestTruthCorpus(Base):
                          + str([r for r in report["results"] if not r["ok"]]))
         self.assertEqual(report["passed"], 10)
 
+    def test_extended_scenarios_all_match(self):
+        # Broader category coverage (auth variants, privilege variants incl. denied
+        # sudo, the full file-op set, apt/dpkg packages, inbound network, more
+        # persistence types) — all checked against independently-authored truth.
+        from tests.corpus.build_scenario_host import build_extended
+        tc = self._corpus()
+        root = self.make_root()
+        build_extended(root, NOW)
+        truth_path = (Path(__file__).resolve().parents[1] / "corpus"
+                      / "scenarios_extended_ground_truth.json")
+        truth = json.loads(truth_path.read_text())
+        report = tc.run_corpus(str(root), truth, NOW.isoformat())
+        self.assertEqual(report["failed"], 0,
+                         "extended scenarios should all match: "
+                         + str([r for r in report["results"] if not r["ok"]]))
+        self.assertGreaterEqual(report["passed"], 13)
+
     def test_scenario_corpus_detects_a_wrong_answer(self):
         # Seed a false claim against the same host (alice installed apache — she did
         # not) and confirm the corpus flags it rather than rubber-stamping.
@@ -3664,6 +3681,22 @@ class TestRedTeamEscalation(Base):
         attr = self._classify_exec(root, "logrotate")
         self.assertFalse(attr.attributable)              # no human blamed
 
+    def test_denied_sudo_on_auditd_host_is_not_dropped(self):
+        # REGRESSION (evidence conservation): a denied sudo ("user NOT in sudoers")
+        # exists only in auth.log — auditd never records a command that did not run.
+        # prefer_primary used to drop ALL auth events when auditd was present, silently
+        # losing denied escalation attempts on an auditd host. They must survive.
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("carol", 1003)
+        h.enable_execve()                       # auditd present + execve rule loaded
+        h.auth_sudo_fail("carol", ago(hours=2))  # denial -> auth.log only
+        h.write()
+        f = self.finding(root, "carol", "privilege")
+        self.assertEqual(len(f.events), 1, "denied sudo dropped on an auditd host")
+        self.assertEqual(f.events[0].attrs.get("res"), "failed")
+        self.assertIn("failed", f.summary.lower())
+
     def test_setuid_escalation_attributes_who_but_cannot_name_the_method(self):
         # The RED-TEAM finding: a root action with the user's auid but NO sudo/su
         # record (a setuid-root binary, or pkexec) is still correctly attributed to
@@ -3685,6 +3718,41 @@ class TestRedTeamEscalation(Base):
         self.assertIsNone(attr.escalation)               # HOW: NOT proven as sudo/su
         # So the trace shows the root action attributed to alice with no escalation
         # record — an honest "by some means", not a fabricated sudo.
+
+
+class TestReleaseGates(Base):
+    """Guards the release-gate runner: gate status is COMPUTED from executed checks
+    (no manual green), truth-corpus & container-semantics gates are green here, and
+    the gates with irreducible real-world components (container OCI build, 30-day
+    duration, third-party human) correctly stay RED with a documented blocker —
+    never fabricated to green."""
+
+    def test_truth_corpus_gate_is_green(self):
+        import scripts.run_release_gates as rg
+        gate, detail = rg.gate_truth_corpus()
+        self.assertEqual(gate["status"], "GREEN",
+                         [c for c in gate["checks"] if not c["ok"]])
+        self.assertGreaterEqual(detail["total_scenarios"], 20)
+
+    def test_container_gate_stays_red_without_a_daemon_but_semantics_pass(self):
+        import scripts.run_release_gates as rg
+        gate, detail = rg.gate_container()
+        # Daemon-independent structural + lifecycle-semantics checks pass...
+        self.assertTrue(all(c["ok"] for c in gate["checks"]),
+                        [c for c in gate["checks"] if not c["ok"]])
+        # ...but the gate is RED with a documented, non-fabricated blocker.
+        if not detail["daemon_available"]:
+            self.assertEqual(gate["status"], "RED")
+            self.assertTrue(gate["blockers"])
+            self.assertIn("closing_command", gate["blockers"][0])
+
+    def test_host_trial_and_reproduction_gates_carry_irreducible_blockers(self):
+        import scripts.run_release_gates as rg
+        d, _ = rg.gate_host_trial(cycles=8)
+        e, _ = rg.gate_reproduction(run_clone=False)
+        for g in (d, e):
+            self.assertTrue(g["blockers"], f"{g['gate']} lost its blocker")
+            self.assertEqual(g["status"], "RED")
 
 
 class TestTrace(Base):
