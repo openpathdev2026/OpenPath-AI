@@ -426,14 +426,17 @@ class AuditdCollector(Collector):
                 continue
             with fh:
                 for lineno, line in enumerate(fh, start=1):
-                    if "type=" not in line or "audit(" not in line:
-                        continue
-                    m_id = _AUDIT_ID_RE.search(line)
+                    if "type=" not in line:
+                        continue  # not an audit record at all (blank line, etc.)
+                    # A line bearing a ``type=`` marker IS an audit record --
+                    # audit.log contains nothing else. If it lacks the ``audit(...)``
+                    # timestamp/id or the id/type cannot be decoded, it is a CORRUPT
+                    # or truncated record, not a non-record: count it as unparseable
+                    # rather than dropping it silently (conservation: read == parsed
+                    # + disclosed loss, with no hidden drops).
+                    m_id = _AUDIT_ID_RE.search(line) if "audit(" in line else None
                     m_ty = _TYPE_RE.search(line)
                     if not m_id or not m_ty:
-                        # Looked like an audit record (has type= and audit(...)) but
-                        # its id/type could not be decoded: count it rather than
-                        # dropping it silently.
                         if stats is not None:
                             stats["unparseable"] += 1
                         continue

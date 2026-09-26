@@ -3720,6 +3720,143 @@ class TestRedTeamEscalation(Base):
         # record — an honest "by some means", not a fabricated sudo.
 
 
+class TestHistoricalIngestion(Base):
+    """Deploy-at-day-0 reality: on a host with pre-existing retained + ROTATED logs,
+    OpenPath answers historical questions immediately from those logs (no new activity
+    required), and discloses the retention horizon honestly rather than overclaiming."""
+
+    def test_rotated_history_answered_immediately(self):
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.enable_execve().enable_network()
+        h.boot(ago(days=11))
+        h.login("alice", ago(days=10), line="pts/0", host="10.0.0.5",
+                until=ago(days=10, hours=-1))
+        h.exec(1001, 1001, ["ls"], "/usr/bin/ls", ago(days=10), comm="ls")
+        h.sudo(1001, 0, "/usr/bin/dnf install nginx", ago(days=10))
+        h.exec(1001, 0, ["dnf", "install", "nginx"], "/usr/bin/dnf", ago(days=10),
+               euid=0, comm="dnf")
+        h.rotate_logs()   # all the above now live ONLY in audit.log.1 / wtmp.1
+        h.write()
+        win = self.win(expr="last 30 days")
+        cmds = self.finding(root, "alice", "commands", window=win)
+        comms = {e.attrs.get("comm") for e in cmds.events}
+        # History in rotated files is read immediately at "deploy" time.
+        self.assertIn("ls", comms)
+        self.assertIn("dnf", comms)
+        sess = self.finding(root, "alice", "sessions", window=win)
+        self.assertTrue(sess.events, "historical session (wtmp.1) not read")
+
+    def test_pre_deployment_window_beyond_retention_is_disclosed(self):
+        # A window reaching before the oldest retained (rotated) record must disclose
+        # the blind spot, not silently claim completeness.
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.enable_execve()
+        h.exec(1001, 1001, ["ls"], "/usr/bin/ls", ago(days=10), comm="ls")
+        h.rotate_logs()
+        h.exec(1001, 1001, ["id"], "/usr/bin/id", ago(hours=1), comm="id")
+        h.write()
+        f = self.finding(root, "alice", "commands", window=self.win(expr="last 30 days"))
+        # Retention-bounded (a .1 file exists) + earliest record ~10d in => a horizon
+        # gap for the 30-day window is disclosed.
+        self.assertTrue(any(g.question == "horizon" for g in self.result(
+            root, "alice", "commands", window=self.win(expr="last 30 days")
+        ).ledger.all_gaps()), "retention horizon not disclosed for a 30-day window")
+
+
+class TestConservationAudit(Base):
+    """read == parsed + disclosed_loss, with NO hidden drops — proven adversarially
+    per collector against corrupt/truncated input."""
+
+    def test_corrupt_audit_record_is_counted_not_silently_dropped(self):
+        # REGRESSION: an audit.log line with a `type=` marker but no decodable
+        # `audit(...)` id (corrupted/truncated) used to be skipped silently. audit.log
+        # holds only records, so it must be counted as unparseable + disclosed.
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0)
+        h.enable_execve()
+        h.exec(0, 0, ["ok"], "/usr/bin/ok", ago(hours=2), comm="ok")
+        h.write()
+        log = root / "var/log/audit/audit.log"
+        log.write_text(log.read_text() + "type=SYSCALL msg=CORRUPT-no-id truncated\n")
+        led = self.result(root, "root", "commands").ledger
+        cov = led.get("auditd")
+        self.assertEqual(cov.unparseable, 1, "corrupt audit record silently dropped")
+        self.assertTrue(any(g.question == "conservation" and g.source_id == "auditd"
+                            for g in led.all_gaps()))
+
+    def test_truncated_wtmp_tail_is_disclosed(self):
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0)
+        h.write()
+        (root / "var/log/wtmp").write_bytes(b"\x01\x02\x03partial-record-under-384")
+        led = self.result(root, "root", "sessions").ledger
+        cov = led.get("wtmp")
+        self.assertGreaterEqual(cov.unparseable, 1)
+        self.assertTrue(any(g.question == "conservation" and g.source_id == "wtmp"
+                            for g in led.all_gaps()))
+
+
+class TestAttributionChains(Base):
+    """Expanded SSH -> X attribution chains + shared-TTY/reconnect: the human is
+    credited correctly (by auid) regardless of the escalation path or TTY reuse."""
+
+    def _classify(self, root, comm):
+        from openpath.facets.attribution import classify_root_action
+        from openpath.model.event import EventType
+        ctx = Engine().build_context(self.env(root), "root", self.win())
+        ex = [e for e in ctx.events
+              if e.type == EventType.EXEC and e.attrs.get("comm") == comm][0]
+        return classify_root_action(ex, ctx)
+
+    def _ssh_then(self, escalate):
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.enable_execve()
+        h.ssh_accept("alice", "1.1.1.1", ago(hours=3))
+        h.login("alice", ago(hours=3), line="pts/0", host="1.1.1.1", until=ago(hours=1))
+        escalate(h)
+        h.write()
+        return root
+
+    def test_ssh_then_sudo_credits_alice(self):
+        root = self._ssh_then(lambda h: (
+            h.sudo(1001, 0, "/x", ago(hours=2)),
+            h.exec(1001, 0, ["id"], "/usr/bin/id", ago(hours=2), euid=0, comm="id")))
+        self.assertEqual(self._classify(root, "id").actor, "alice")
+
+    def test_ssh_then_su_credits_alice(self):
+        root = self._ssh_then(lambda h: (
+            h.su(1001, 0, ago(hours=2)),
+            h.exec(1001, 0, ["id"], "/usr/bin/id", ago(hours=2), euid=0, comm="id")))
+        self.assertEqual(self._classify(root, "id").actor, "alice")
+
+    def test_shared_tty_reuse_does_not_cross_attribute(self):
+        # alice then bob use the SAME tty line (pts/0) at different times. Each user's
+        # command stays theirs (by auid), never leaking across the shared line.
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001).passwd("bob", 1002)
+        h.enable_execve()
+        h.login("alice", ago(hours=6), line="pts/0", host="1.1.1.1", until=ago(hours=5))
+        h.login("bob", ago(hours=4), line="pts/0", host="2.2.2.2", until=ago(hours=3))
+        h.exec(1001, 1001, ["acmd"], "/usr/bin/acmd", ago(hours=5, minutes=30),
+               comm="acmd", ses=10, tty="pts0")
+        h.exec(1002, 1002, ["bcmd"], "/usr/bin/bcmd", ago(hours=3, minutes=30),
+               comm="bcmd", ses=20, tty="pts0")
+        h.write()
+        a = {e.attrs.get("comm") for e in self.finding(root, "alice", "commands").events}
+        b = {e.attrs.get("comm") for e in self.finding(root, "bob", "commands").events}
+        self.assertEqual(a, {"acmd"})
+        self.assertEqual(b, {"bcmd"})
+
+
 class TestReleaseGates(Base):
     """Guards the release-gate runner: gate status is COMPUTED from executed checks
     (no manual green), truth-corpus & container-semantics gates are green here, and
