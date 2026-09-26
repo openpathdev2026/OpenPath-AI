@@ -82,6 +82,9 @@ class EventType(enum.Enum):
     # byte volume, direction -- distinct from the auditd connect/bind NETWORK events
     # so it never alters the audited network answer.
     NETFLOW = "netflow"
+    # Network telemetry from logs a bundle may carry: DNS queries, firewall
+    # drops/rejects, web/proxy accesses, and socket open/close lifetimes.
+    NETLOG = "netlog"
 
     # Anything a collector understood but that has no dedicated category yet.
     OTHER = "other"
@@ -158,6 +161,8 @@ class Event:
             return ("file-read", a.get("path") or "?")
         if t is EventType.NETFLOW:
             return ("flow", a.get("artifact") or f"{a.get('peer')}:{a.get('dport')}")
+        if t is EventType.NETLOG:
+            return (a.get("kind") or "netlog", a.get("artifact") or self.summary)
         if t is EventType.NETWORK:
             ai = a.get("addr_info")
             if isinstance(ai, dict):

@@ -17,6 +17,7 @@ from openpath.sources.shell_history import ShellHistoryCollector
 from openpath.sources.btmp import BtmpCollector
 from openpath.sources.journal_sshd import SshdJournalCollector
 from openpath.sources.journald import GeneralJournaldCollector
+from openpath.sources.netlogs import NetLogsCollector
 from openpath.sources.packages import PackageCollector
 from openpath.sources.persistence import PersistenceCollector
 from openpath.sources.pkgpolicy import PkgPolicyCollector
@@ -38,6 +39,7 @@ def default_collectors() -> List[Collector]:
         ShellHistoryCollector(),
         FirewallCollector(),
         ConntrackCollector(),
+        NetLogsCollector(),
     ]
 
 
@@ -57,5 +59,6 @@ __all__ = [
     "ShellHistoryCollector",
     "FirewallCollector",
     "ConntrackCollector",
+    "NetLogsCollector",
     "default_collectors",
 ]

@@ -515,6 +515,34 @@ class HostBuilder:
         self._persist["etc/nftables.conf"] = text.splitlines()
         return self
 
+    def dns_query(self, domain, client, at, qtype="A"):
+        self._persist_add("var/log/openpath/dns.log",
+                          f"{at.astimezone(timezone.utc).isoformat()} {qtype} "
+                          f"{domain} {client}")
+        return self
+
+    def fw_drop(self, src, dst, dport, at, verdict="DROP"):
+        self._persist_add("var/log/openpath/firewall.log",
+                          f"{at.astimezone(timezone.utc).isoformat()} kernel: "
+                          f"IN=eth0 OUT= SRC={src} DST={dst} PROTO=TCP DPT={dport} "
+                          f"{verdict}")
+        return self
+
+    def proxy_access(self, client, url, at, verb="GET"):
+        self._persist_add("var/log/openpath/proxy.log",
+                          f"{at.astimezone(timezone.utc).isoformat()} {client} "
+                          f"{verb} {url} 200 1234")
+        return self
+
+    def socket_lifetime(self, peer, port, open_at, close_at, held_s, proto="tcp"):
+        import json as _json
+        self._persist_add("var/log/openpath/socket-lifetimes.jsonl", _json.dumps({
+            "peer": peer, "port": port,
+            "open": open_at.astimezone(timezone.utc).isoformat(),
+            "close": close_at.astimezone(timezone.utc).isoformat(),
+            "held_s": held_s, "proto": proto}))
+        return self
+
     def conntrack(self, proto, osrc, odst, sport, dport, state="ESTABLISHED",
                   nbytes=None):
         """A tracked flow line (proc/net/nf_conntrack format). nbytes -> accounting."""

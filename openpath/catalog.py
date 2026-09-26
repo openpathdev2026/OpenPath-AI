@@ -207,6 +207,15 @@ _BY_FACET.setdefault(
         "file_access", ("auditd",), True, _FILEACCESS_SPEC),
 )
 
+_NETLOGS_SPEC = _S(certified=[["netlogs"]], fatal=["netlogs"])
+_BY_FACET.setdefault(
+    "netlogs",
+    CatalogQuestion(
+        "NW-08", "What DNS queries, firewall drops, web/proxy accesses, and socket "
+        "lifetimes are recorded (network telemetry logs)?",
+        "netlogs", ("netlogs",), True, _NETLOGS_SPEC),
+)
+
 _NETFLOW_SPEC = _S(certified=[["conntrack"]], fatal=["conntrack"])
 _BY_FACET.setdefault(
     "netflow",

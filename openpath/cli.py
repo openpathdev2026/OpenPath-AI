@@ -137,7 +137,7 @@ def _facet_event_types(facet_name):
         "system_lifecycle": (E.BOOT, E.SYSTEM), "pkg_policy": (E.PKG_POLICY,),
         "process_tree": (E.EXEC,), "shell_history": (E.SHELL_HISTORY,),
         "firewall": (E.FIREWALL,), "file_access": (E.FILE_READ,),
-        "netflow": (E.NETFLOW,),
+        "netflow": (E.NETFLOW,), "netlogs": (E.NETLOG,),
     }.get(facet_name, ())
 
 

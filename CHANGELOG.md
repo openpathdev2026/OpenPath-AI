@@ -6,6 +6,13 @@ based on Keep a Changelog; dates are UTC.
 ## [Unreleased]
 
 ### Added
+- **Network telemetry logs (NW-08/10/12/15, 151 total).** A net-logs collector +
+  host-level facet read the network logs a bundle may carry -- DNS queries (NW-08),
+  firewall DROP/REJECT lines (NW-10), web/proxy accesses (NW-12), and socket
+  open/close lifetimes (NW-15) -- emitting cited `EventType.NETLOG` events and
+  disclosing, per sub-kind, when its log is absent (so a "no DNS queries" answer is
+  scoped to whether resolver logging is on). Proven in `TestNetLogs`.
+
 - **Temporal / cross-user meta questions (TM-03/06/13, 147 total).** Three aggregate
   facets: `host_changes` (TM-03) enumerates everything that changed on the host in
   the window across ALL users (files, accounts, groups, packages, persistence,

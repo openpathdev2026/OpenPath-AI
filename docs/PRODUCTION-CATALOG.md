@@ -5,7 +5,7 @@ The full set of user-facing forensic questions OpenPath commits to, each with a
 count is an output of the analysis, not a target. Certification is a property of
 a question, not a limit on which questions exist.
 
-**153 questions** — CERTIFIED 147, CONTRACTED 6.
+**153 questions** — CERTIFIED 151, CONTRACTED 2.
 
 - **CERTIFIED** — wired and proven end-to-end today (see `catalog.py` + the
   conformance suite). Complete *within the covered evidence scope*, never absolute.
@@ -94,10 +94,14 @@ a question, not a limit on which questions exist.
 | NW-05 | What ports or sockets did {user} bind or listen on — any new listeners or backdoors? | `network` | auditd(bind audit rule) |
 | NW-06 | What remote hosts established inbound connections to this system (source IPs of incoming flows)? | `netflow` | connection-tracking / inbound-flow collector, journal.sshd, auth, auditd(bind audit rule) |
 | NW-07 | What local (UNIX-domain) socket connections did {user} make — e.g. to docker.sock or D-Bus/systemd sockets? | `network` | auditd(connect audit rule) |
+| NW-08 | What DNS lookups / name-resolution queries did {user} perform (C2 domains, DNS tunneling)? | `netlogs` | DNS/resolver query-log collector, auditd(connect audit rule) |
 | NW-09 | What firewall / packet-filter rules are in place, and did {user} change them? | `firewall` | nftables/iptables collector, auditd(execve audit rule) |
+| NW-10 | Were {user}'s connections (or an attacker's) blocked or dropped by the firewall? | `netlogs` | firewall-log collector |
 | NW-11 | Did {user} change network interface, routing, VPN, or NetworkManager configuration? | `files` | NetworkManager/VPN collector, auditd(execve audit rule), auditd(host-wide file-change rule) |
+| NW-12 | What external web or cloud resources did {user} access — which URLs, hosts, or cloud API actions? | `netlogs` | web/proxy/cloud audit-log collector, auditd(connect audit rule) |
 | NW-13 | Can {user} be affirmatively cleared of network activity (an evidenced negative)? | `network` | auditd(connect audit rule), auditd(bind audit rule) |
 | NW-14 | Over what protocol/transport did {user} communicate (TCP vs UDP, or a raw socket)? | `netflow` | auditd(connect audit rule) |
+| NW-15 | When did a given connection open and close, and how long was it held open (persistent channel)? | `netlogs` | connection-close/disconnect collector, auditd(connect audit rule) |
 | PK-01 | What software changed on this host overall during the window, and when — regardless of who did it? | `packages` | packages |
 | PK-02 | When was a specific package (e.g. nginx) installed, upgraded, or removed on this host? | `packages` | packages |
 | PK-03 | What version was a package upgraded or downgraded from and to? | `packages` | packages |
@@ -173,38 +177,14 @@ a question, not a limit on which questions exist.
 
 ## CONTRACTED (roadmap)
 
-### Needs: DNS/resolver query-log collector (systemd-resolved via general journald, dnsmasq/unbound/BIND query logs, or packet-level DNS)  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| NW-08 | What DNS lookups / name-resolution queries did {user} perform (C2 domains, DNS tunneling)? | NEW:dns | Query names/answers unmodeled; only post-resolution IPs surface, and only if the resolved host was subsequently connected to; a connect t... |
-
-### Needs: connection-close events (auditd socket close/shutdown syscall collection, or wiring up the parsed-but-unused sshd Disconnect/Connection-closed parsing)  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| NW-15 | When did a given connection open and close, and how long was it held open (persistent channel)? | NEW:socketclose | The sshd _DISCONNECT_RE is defined but UNUSED so even SSH session-close is not emitted; close/shutdown syscalls not collected; only the o... |
-
 ### Needs: file-integrity / content-baseline collector (AIDE/tripwire DB, content-capturing FIM, backup/snapshot diffs, or git/etckeeper history of /etc)  (1)
 
 | ID | Question | Facet | Blind spots |
 |----|----------|-------|-------------|
 | FS-13 | What exactly changed inside a modified file (content, before/after diff, which lines/keys)? | NEW:file_integrity | auditd records syscall metadata (path/op/actor/time), never file bytes — no content, hashes, size deltas, or line-level diff anywhere in ... |
 
-### Needs: firewall-log collector (nftables/iptables LOG/NFLOG output via kernel log or general journald)  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| NW-10 | Were {user}'s connections (or an attacker's) blocked or dropped by the firewall? | NEW:firewall | Syscall-layer success is not network-layer success — a connect syscall observed in auditd does not mean the packet was delivered; dropped... |
-
 ### Needs: geo/threat-intel enrichment + historical login baseline store (and cloud/web/proxy ingestion for access that never hits a local login carrier)  (1)
 
 | ID | Question | Facet | Blind spots |
 |----|----------|-------|-------------|
 | IA-10 | Did a login originate from a new, geographically unexpected, or known-malicious IP? | NEW:origin_reputation | Raw origin IPs are CERTIFIED as origins; the new/geo/malicious classification is entirely unmodeled; 24h window gives no baseline. |
-
-### Needs: web/proxy/cloud audit-log collector (nginx/apache access logs, forward-proxy logs, cloud provider audit trail)  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| NW-12 | What external web or cloud resources did {user} access — which URLs, hosts, or cloud API actions? | NEW:webproxy | Everything above the socket layer — HTTP host/path, TLS SNI, cloud API action/resource — is invisible; the facet shows only the TCP endpo... |
