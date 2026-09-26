@@ -1,6 +1,6 @@
 # OpenPath-AI — Production Sign-Off Package (v1)
 
-_Generated 2026-09-26T10:22:42.505353+00:00 by `scripts/gen_signoff_package.py` — regenerate to re-verify._
+_Generated 2026-09-26T11:54:41.057439+00:00 by `scripts/gen_signoff_package.py` — regenerate to re-verify._
 
 Version `0.1.0` · frozen fingerprint `109709966e2b` · CERTIFIED 153 / CONTRACTED 0.
 
@@ -15,7 +15,8 @@ The decision document for "what must be true before OpenPath v1 ships." Machine-
 - **Sources:** `wtmp`, `btmp`, `journal.sshd`, `auditd`, `auth`, `packages`, `persistence`, `authz`, `journald`, `pkgpolicy`, `shell_history`, `firewall`, `conntrack`, `netlogs`, `file_integrity`, `ip_reputation`.
 - **Mandatory:** none — every source's absence is a disclosed gap, never a crash or false negative. Six *primary* sources back the wired core; ten *enrichment* sources extend the contract.
 - **Failure modes (uniform, tested):** absent → `ABSENT`+remedy; unreadable → `UNREADABLE`+remedy; rotation → rotated files read + split events reunited + horizon gap; undecodable record → conservation gap. None ever becomes a silent "nothing happened".
-- **Traceability:** `docs/ARCHITECTURE-TRACE.md` walks every answer back Question → Facet → Event Types → Collectors → Raw Sources, derived from code.
+- **Traceability:** `docs/ARCHITECTURE-TRACE.md` walks every answer back Question → Facet → Event Types → Collectors → Raw Sources, derived from code, and `openpath-ai --trace` instantiates that chain live per answer down to the raw record ids (the 'why', and the 'why not' + remedy when UNANSWERABLE).
+- **Red-team discipline:** `docs/RED-TEAM.md` reviews each question by asking 'what evidence would make this answer wrong?'; the worked pass on root escalation separates WHO (robust, by auid) from HOW (asserted only when an escalation record exists — setuid/pkexec/LPE disclosed as method-unproven).
 
 
 ---
@@ -30,12 +31,12 @@ The lifecycle from an event happening to OpenPath being able to report it, with 
 |-------|--------|---------|--------|
 | audit_event_to_observable | not_measurable | — | auditctl absent -- the kernel audit subsystem is host-global and not namespaced, so it is unavailable in this (container) environment |
 | journal_event_to_observable | not_measurable | — | marker not visible within 20s (journald may be volatile/rate-limited here) |
-| analysis_latency | measured | 0.0352 | 40 events, 16 sources over / |
-| bundle_export_latency | measured | 0.0410 | bundle size 495 KiB |
-| stage:T_collect_and_parse | measured | 0.0292 |  |
-| stage:T_resolve_and_query | measured | 0.0312 |  |
-| stage:T_narration | measured | 0.0006 |  |
-| stage:T_total | measured | 0.0610 | 40 events, 16 sources |
+| analysis_latency | measured | 0.0391 | 40 events, 16 sources over / |
+| bundle_export_latency | measured | 0.0451 | bundle size 495 KiB |
+| stage:T_collect_and_parse | measured | 0.0270 |  |
+| stage:T_resolve_and_query | measured | 0.0307 |  |
+| stage:T_narration | measured | 0.0005 |  |
+| stage:T_total | measured | 0.0583 | 40 events, 16 sources |
 
 ### Freshness SLA (the commitment)
 
@@ -108,7 +109,7 @@ The freeze is enforced by `TestCatalogFreeze.test_catalog_v1_frozen`: the v1 cat
 
 ## 7. Release Checklist
 
-**11/15 complete.** The three open items are operator/runtime activities that cannot be performed in this build environment; each is tracked in the risk register.
+**13/17 complete.** The three open items are operator/runtime activities that cannot be performed in this build environment; each is tracked in the risk register.
 
 - [x] Full contract CERTIFIED, CONTRACTED 0
 - [x] Catalog frozen at a pinned fingerprint + enforcing test
@@ -120,6 +121,8 @@ The freeze is enforced by `TestCatalogFreeze.test_catalog_v1_frozen`: the v1 cat
 - [x] Clean failure-mode behavior (permission, disk-full, rotation)
 - [x] Host Truth Corpus **framework** + ten-scenario worked example (10/10 matched, detects wrong answers)
 - [x] Architecture Trace (answer → raw source) generated from code
+- [x] In-product answer traceability to raw records (`--trace`)
+- [x] Red-team review of root-escalation paths (WHO vs HOW, disclosed)
 - [x] Reproduction script green from a clean checkout via documented install (`scripts/reproduce.sh`)
 - [ ] Host Truth Corpus **populated** on a real host (operator)
 - [ ] **Independent reproduction** run by a third party (operator)

@@ -241,3 +241,113 @@ def render_text(result: AnalysisResult, *, verbose: bool = False) -> str:
 
     lines.append("")
     return "\n".join(lines)
+
+
+# -- Trace: walk an answer back to raw records (the --trace capability) ------- #
+
+def _facet_scope_types(facet: str) -> List[str]:
+    """The event types a facet reasons over, for the trace's theoretical scope."""
+    try:
+        from openpath.cli import _facet_event_types  # lazy: cli imports render
+        return [t.name for t in _facet_event_types(facet)]
+    except Exception:
+        return []
+
+
+def _trace_data(result: AnalysisResult) -> dict:
+    """Structured provenance of an answer: facet -> event types -> collectors ->
+    raw records, plus the sources that were consulted-but-empty and the gaps. Shared
+    by the text and JSON trace renderers so they can never disagree."""
+    f = result.finding
+    events = f.events
+    observed_types = sorted({e.type.name for e in events})
+    # Sources that produced the evidence, with their ledger status.
+    by_source: dict = {}
+    for e in events:
+        b = by_source.setdefault(e.source_id, {"source_id": e.source_id, "events": 0})
+        b["events"] += 1
+    for sid, b in by_source.items():
+        cov = result.ledger.get(sid)
+        b["status"] = cov.status.value if cov else "unknown"
+    # Sources named by unmet prerequisites (consulted, could not answer).
+    unavailable = [{"source_id": g.source_id, "reason": g.reason, "remedy": g.remedy}
+                   for g in f.gaps if g.source_id]
+    ev_rows = []
+    for i, e in enumerate(events, 1):
+        ev_rows.append({
+            "n": i,
+            "summary": e.summary,
+            "actor": e.actor_name,
+            "ts": e.ts.isoformat() if getattr(e, "ts", None) else None,
+            "type": e.type.name,
+            "citations": [c.to_dict() for c in e.citations],
+        })
+    window = getattr(result.context, "window", None)
+    return {
+        "subject": result.subject.username,
+        "window": window.to_dict() if window is not None else None,
+        "question_family": f.question_family,
+        "facet": f.facet,
+        "confidence": f.confidence.value if f.confidence else None,
+        "confidence_note": f.confidence_note,
+        "event_types_facet_reasons_over": _facet_scope_types(f.facet),
+        "event_types_observed": observed_types,
+        "collectors_with_evidence": list(by_source.values()),
+        "collectors_unavailable": unavailable,
+        "events": ev_rows,
+        "gaps": [g.to_dict() for g in f.gaps],
+    }
+
+
+def render_trace_json(result: AnalysisResult) -> str:
+    return json.dumps({"trace": _trace_data(result)}, indent=2, sort_keys=False)
+
+
+def _clip(s: str, n: int = 120) -> str:
+    s = (s or "").replace("\n", " ")
+    return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def render_trace(result: AnalysisResult) -> str:
+    """Human-readable provenance chain: why OpenPath gave this answer, down to the
+    raw records — so an investigator can challenge any claim and walk backwards."""
+    t = _trace_data(result)
+    win = t["window"]["label"] if t.get("window") and t["window"].get("label") else ""
+    lines: List[str] = []
+    lines.append(f"TRACE — {t['facet']} for {t['subject']}"
+                 + (f"   (window: {win})" if win else ""))
+    lines.append(f"  Question family : {t['question_family']}")
+    lines.append(f"  Facet           : {t['facet']}")
+    scope = ", ".join(t["event_types_facet_reasons_over"]) or "(aggregate)"
+    obs = ", ".join(t["event_types_observed"]) or "none"
+    lines.append(f"  Event types     : reasons over [{scope}]; observed [{obs}]")
+    lines.append(f"  Confidence      : {t['confidence']}"
+                 + (f" — {_clip(t['confidence_note'], 90)}" if t["confidence_note"] else ""))
+    lines.append("  Collectors consulted:")
+    if t["collectors_with_evidence"]:
+        for b in t["collectors_with_evidence"]:
+            lines.append(f"    ✓ {b['source_id']:<14} {b['status']:<11} "
+                         f"{b['events']} event(s)")
+    seen_src = {b["source_id"] for b in t["collectors_with_evidence"]}
+    for u in t["collectors_unavailable"]:
+        if u["source_id"] not in seen_src:
+            lines.append(f"    ✗ {u['source_id']:<14} unavailable  "
+                         f"({_clip(u['reason'], 70)})")
+    n = len(t["events"])
+    lines.append(f"  Answer rests on {n} event(s), each traceable to a raw record:"
+                 if n else "  Answer rests on 0 events (an evidenced negative or a "
+                           "disclosed gap — see below):")
+    for e in t["events"]:
+        who = f" [{e['actor']}]" if e["actor"] else ""
+        lines.append(f"    [{e['n']}] {_clip(e['summary'], 96)}{who}")
+        for c in e["citations"]:
+            rec = f" rec={c['record_id']}" if c.get("record_id") else ""
+            lines.append(f"         └─ {c['source_id']}  {c['locator']}{rec}")
+            lines.append(f"            raw: {_clip(c['raw'], 108)}")
+    if t["gaps"]:
+        lines.append("  Gaps (why some things cannot be determined here):")
+        for g in t["gaps"]:
+            rem = f"  [remedy: {_clip(g['remedy'], 70)}]" if g.get("remedy") else ""
+            lines.append(f"    - {_clip(g['reason'], 96)}{rem}")
+    lines.append("")
+    return "\n".join(lines)

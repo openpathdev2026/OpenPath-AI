@@ -32,6 +32,8 @@ from openpath.render import (
     render_readiness,
     render_readiness_json,
     render_text,
+    render_trace,
+    render_trace_json,
 )
 from openpath import router
 
@@ -102,6 +104,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--format", choices=["text", "json"], default="text")
     p.add_argument("--verbose", "-v", action="store_true",
                    help="show all raw evidence records inline")
+    p.add_argument("--trace", action="store_true",
+                   help="explain an answer by tracing it back to raw evidence: "
+                        "Question -> Facet -> Event Types -> Collectors -> raw "
+                        "records. Every claim becomes independently verifiable.")
     p.add_argument("--list-families", action="store_true",
                    help="list the facet families and exit")
     p.add_argument("--catalog", action="store_true",
@@ -324,7 +330,10 @@ def _main(argv: Optional[list] = None) -> int:
         except ValueError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 2
-        if args.format == "json":
+        if args.trace:
+            print(render_trace_json(result) if args.format == "json"
+                  else render_trace(result))
+        elif args.format == "json":
             print(render_json(result))
         else:
             print(render_text(result, verbose=args.verbose))
@@ -359,7 +368,10 @@ def _main(argv: Optional[list] = None) -> int:
 
     result = Engine().analyze(env, username, window, facet_name)
 
-    if args.format == "json":
+    if args.trace:
+        print(render_trace_json(result) if args.format == "json"
+              else render_trace(result))
+    elif args.format == "json":
         print(render_json(result))
     else:
         print(render_text(result, verbose=args.verbose))

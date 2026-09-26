@@ -3596,6 +3596,165 @@ class TestTruthCorpus(Base):
             self.assertIn("expect", case)
 
 
+class TestRedTeamEscalation(Base):
+    """Red-team review of the marquee question "how did USER become root?" — for
+    every escalation path, ask "what evidence would make this answer wrong?" and
+    assert what OpenPath actually distinguishes. Where it CANNOT distinguish the
+    method, that is a disclosed limitation (documented in docs/RED-TEAM.md), not a
+    silent overclaim. Attribution (WHO) is separated from method (HOW)."""
+
+    def _ctx(self, root):
+        return Engine().build_context(self.env(root), "root", self.win())
+
+    def _classify_exec(self, root, comm):
+        from openpath.facets.attribution import classify_root_action
+        from openpath.model.event import EventType
+        ctx = self._ctx(root)
+        ex = [e for e in ctx.events
+              if e.type == EventType.EXEC and e.attrs.get("comm") == comm][0]
+        return classify_root_action(ex, ctx)
+
+    def test_sudo_path_is_attributed_and_method_evidenced(self):
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.enable_execve()
+        h.sudo(1001, 0, "/usr/sbin/useradd x", ago(hours=2))
+        h.exec(1001, 0, ["useradd", "x"], "/usr/sbin/useradd", ago(hours=2), euid=0,
+               comm="useradd")
+        h.write()
+        attr = self._classify_exec(root, "useradd")
+        self.assertEqual(attr.actor, "alice")          # WHO: correct
+        self.assertEqual(attr.kind, "escalated")
+        self.assertIsNotNone(attr.escalation)          # HOW: a sudo record backs it
+
+    def test_su_path_is_attributed(self):
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.enable_execve()
+        h.su(1001, 0, ago(hours=2))
+        h.exec(1001, 0, ["id"], "/usr/bin/id", ago(hours=2), euid=0, comm="id")
+        h.write()
+        attr = self._classify_exec(root, "id")
+        self.assertEqual(attr.actor, "alice")
+        self.assertEqual(attr.kind, "escalated")
+
+    def test_direct_root_login_is_distinguished_from_escalation(self):
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0)
+        h.enable_execve()
+        h.login("root", ago(hours=5), line="pts/0", host="1.2.3.4", until=ago(hours=1))
+        h.ssh_accept("root", "1.2.3.4", ago(hours=5))
+        h.exec(0, 0, ["cat", "/etc/shadow"], "/usr/bin/cat", ago(hours=3), comm="cat")
+        h.write()
+        from openpath.facets.attribution import DIRECT_ROOT_LOGIN
+        attr = self._classify_exec(root, "cat")
+        self.assertEqual(attr.kind, DIRECT_ROOT_LOGIN)   # NOT blamed on a base user
+
+    def test_cron_root_is_unattributable_not_a_human(self):
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.enable_execve()
+        h.exec(4294967295, 0, ["/usr/lib/logrotate"], "/usr/lib/logrotate",
+               ago(hours=2), euid=0, comm="logrotate")
+        h.write()
+        attr = self._classify_exec(root, "logrotate")
+        self.assertFalse(attr.attributable)              # no human blamed
+
+    def test_setuid_escalation_attributes_who_but_cannot_name_the_method(self):
+        # The RED-TEAM finding: a root action with the user's auid but NO sudo/su
+        # record (a setuid-root binary, or pkexec) is still correctly attributed to
+        # the user (WHO), but OpenPath cannot prove the METHOD was sudo — there is no
+        # escalation record. This is DISCLOSED (escalation is None), not asserted as
+        # sudo. A reviewer must treat "escalated" as "gained root as this user by
+        # some means", with the means proven only when an escalation record exists.
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.enable_execve()
+        # euid 0, auid alice, but NO preceding sudo()/su() event.
+        h.exec(1001, 0, ["pkexec", "sh"], "/usr/bin/pkexec", ago(hours=2), euid=0,
+               comm="pkexec")
+        h.write()
+        attr = self._classify_exec(root, "pkexec")
+        self.assertEqual(attr.actor, "alice")            # WHO: still correct (auid)
+        self.assertEqual(attr.kind, "escalated")
+        self.assertIsNone(attr.escalation)               # HOW: NOT proven as sudo/su
+        # So the trace shows the root action attributed to alice with no escalation
+        # record — an honest "by some means", not a fabricated sudo.
+
+
+class TestTrace(Base):
+    """The in-product Architecture Trace (--trace): every answer walks back to the
+    raw records it rests on, so an investigator can independently verify any claim
+    and see exactly which collector/file/record backs it — and, when the answer is
+    UNANSWERABLE, which source was missing and how to fix it."""
+
+    def _host(self):
+        from tests.corpus.build_scenario_host import build
+        root = self.make_root()
+        build(root, NOW)
+        return root
+
+    def test_trace_walks_answer_back_to_raw_records(self):
+        rc, out = self.cli("--user", "alice", "--facet", "privilege", "--trace",
+                           "--data-root", str(self._host()))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("TRACE — privilege for alice", out)
+        self.assertIn("Facet", out)
+        self.assertIn("Event types", out)
+        self.assertIn("Collectors consulted", out)
+        # The chain reaches actual raw audit records (the "why").
+        self.assertIn("auditd", out)
+        self.assertIn("audit.log", out)
+        self.assertIn("raw:", out)
+        # su and sudo both surfaced -> both escalation paths are visible in the trace.
+        self.assertIn("sudo", out)
+        self.assertIn("su session", out)
+
+    def test_trace_json_has_full_provenance(self):
+        rc, out = self.cli("--user", "alice", "--facet", "commands", "--trace",
+                           "--format", "json", "--data-root", str(self._host()))
+        self.assertEqual(rc, 0, out)
+        t = json.loads(out)["trace"]
+        self.assertEqual(t["facet"], "commands")
+        self.assertEqual(t["confidence"], "certified")
+        self.assertTrue(t["events"])
+        # Every traced event carries at least one raw-record citation.
+        for e in t["events"]:
+            self.assertTrue(e["citations"], "a traced event without a raw citation")
+            for c in e["citations"]:
+                self.assertTrue(c["source_id"] and c["locator"] and c["raw"])
+        self.assertTrue(any(b["source_id"] == "auditd"
+                            for b in t["collectors_with_evidence"]))
+
+    def test_trace_explains_an_unanswerable_answer(self):
+        # On a bare host the "why not" must trace to the missing source + remedy,
+        # never a silent blank.
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.write()
+        rc, out = self.cli("--user", "alice", "--facet", "commands", "--trace",
+                           "--data-root", str(root))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("unanswerable", out)
+        self.assertIn("Gaps", out)
+        self.assertIn("remedy", out)
+        self.assertIn("execve", out)   # the exact missing instrumentation is named
+
+    def test_trace_never_asserts_without_a_citation(self):
+        # Soundness under the trace lens: every event the trace shows is cited.
+        from openpath.render import _trace_data
+        result = self.result(self._host(), "alice", "root_activity")
+        t = _trace_data(result)
+        for e in t["events"]:
+            self.assertTrue(e["citations"])
+
+
 class TestCatalogFreeze(Base):
     """Enforces the OpenPath v1 catalog freeze: the question contract cannot drift
     from the frozen fingerprint/count without an explicit, deliberate v2 decision.

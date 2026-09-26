@@ -230,6 +230,29 @@ has no such tail: every source is observed to the analysis instant. Staleness is
 guessed from how old a source's newest record happens to be — a quiet live source
 stays a trustworthy negative.
 
+## Verifiable answers: `--trace`
+
+Any answer can be challenged and walked back to the raw records it rests on. Add
+`--trace` to any query to get the provenance chain — Question → Facet → Event Types →
+Collectors → raw record — so a reviewer never has to take the narration on faith:
+
+```
+openpath-ai --user alice --facet privilege --trace --data-root ./bundle
+# TRACE — privilege for alice
+#   Facet: privilege   Event types: reasons over [PRIVILEGE_ESCALATION, SESSION]
+#   Collectors consulted:  ✓ auditd  available  4 event(s)
+#   Answer rests on 4 event(s), each traceable to a raw record:
+#     [1] ran command via sudo: /usr/bin/dnf install -y nginx (success)
+#           └─ auditd  /var/log/audit/audit.log:1  rec=...:1000
+#              raw: type=USER_CMD msg=audit(...) ...
+```
+
+When the answer is UNANSWERABLE, `--trace` shows *why not* — the source that was
+missing and the exact remedy — rather than a blank. This is the
+`docs/ARCHITECTURE-TRACE.md` chain, instantiated live for one answer with real record
+ids. See also `docs/RED-TEAM.md` for the "what evidence would make this answer wrong?"
+review discipline.
+
 ## How gap disclosure works (the honest part)
 
 Each collector reports a **coverage** record: whether the source is present, how
@@ -334,5 +357,5 @@ tests/        # unit/, conformance/, live/, corpus/ (host-truth-corpus scenarios
 docs/         # CLIENT-QUESTION-CATALOG, PRODUCTION-CATALOG, EVIDENCE-SOURCES,
               # EVIDENCE-SURFACE, ARCHITECTURE, ARCHITECTURE-TRACE, DEPLOYMENT,
               # PRODUCTION-READINESS, PRODUCTION-EVIDENCE, PRODUCTION-SIGNOFF,
-              # CATALOG-FREEZE, REPRODUCTION, LIMITATIONS, TESTING
+              # CATALOG-FREEZE, REPRODUCTION, RED-TEAM, LIMITATIONS, TESTING
 ```

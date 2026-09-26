@@ -127,6 +127,11 @@ def build() -> str:
         "Every link is derived from the shipped code (the facet↔EventType map, the "
         "EventTypes each collector emits, the files each collector reads), so this "
         "trace is verifiable against the implementation, not asserted.", "",
+        "This static map is also available **live, per answer**: `openpath-ai "
+        "--trace ...` instantiates the chain for one query down to the raw record ids "
+        "backing it (and, for an UNANSWERABLE answer, the missing source + remedy). "
+        "See `docs/RED-TEAM.md` for the \"what evidence would make this answer "
+        "wrong?\" review discipline built on it.", "",
         "## Per-facet trace", "",
         "| facet | kind | event types | collectors | raw sources | # questions |",
         "|-------|------|-------------|------------|-------------|-------------|",

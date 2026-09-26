@@ -70,7 +70,13 @@ def sec1_evidence_surface():
         "horizon gap; undecodable record → conservation gap. None ever becomes a "
         "silent \"nothing happened\".\n"
         "- **Traceability:** `docs/ARCHITECTURE-TRACE.md` walks every answer back "
-        "Question → Facet → Event Types → Collectors → Raw Sources, derived from code.\n"
+        "Question → Facet → Event Types → Collectors → Raw Sources, derived from code, "
+        "and `openpath-ai --trace` instantiates that chain live per answer down to the "
+        "raw record ids (the 'why', and the 'why not' + remedy when UNANSWERABLE).\n"
+        "- **Red-team discipline:** `docs/RED-TEAM.md` reviews each question by asking "
+        "'what evidence would make this answer wrong?'; the worked pass on root "
+        "escalation separates WHO (robust, by auid) from HOW (asserted only when an "
+        "escalation record exists — setuid/pkexec/LPE disclosed as method-unproven).\n"
     )
 
 
@@ -227,6 +233,8 @@ def sec7_release_checklist():
         (True, "Host Truth Corpus **framework** + ten-scenario worked example "
                "(10/10 matched, detects wrong answers)"),
         (True, "Architecture Trace (answer → raw source) generated from code"),
+        (True, "In-product answer traceability to raw records (`--trace`)"),
+        (True, "Red-team review of root-escalation paths (WHO vs HOW, disclosed)"),
         (True, "Reproduction script green from a clean checkout via documented "
                "install (`scripts/reproduce.sh`)"),
         (False, "Host Truth Corpus **populated** on a real host (operator)"),

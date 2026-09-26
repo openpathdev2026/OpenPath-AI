@@ -1,6 +1,6 @@
 # OpenPath-AI — Architecture Trace
 
-_Generated 2026-09-26T10:50:21.821809+00:00 by `scripts/gen_architecture_trace.py` — regenerate to re-verify._
+_Generated 2026-09-26T11:54:40.838376+00:00 by `scripts/gen_architecture_trace.py` — regenerate to re-verify._
 
 Walk any user-visible answer back to the raw evidence it rests on:
 
@@ -9,6 +9,8 @@ Question → Facet → Event Types → Collectors → Raw Sources
 ```
 
 Every link is derived from the shipped code (the facet↔EventType map, the EventTypes each collector emits, the files each collector reads), so this trace is verifiable against the implementation, not asserted.
+
+This static map is also available **live, per answer**: `openpath-ai --trace ...` instantiates the chain for one query down to the raw record ids backing it (and, for an UNANSWERABLE answer, the missing source + remedy). See `docs/RED-TEAM.md` for the "what evidence would make this answer wrong?" review discipline built on it.
 
 ## Per-facet trace
 
