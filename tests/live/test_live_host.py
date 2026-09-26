@@ -73,6 +73,46 @@ class TestLiveHost(unittest.TestCase):
         subjects = Engine().discover_subjects(self.collected)
         self.assertIn("root", subjects)
 
+    def test_real_dpkg_counts_match_independent_ground_truth(self):
+        # REAL-HOST TRUTH CORPUS (self-grounding): independently count the package
+        # transactions in the actual /var/log/dpkg.log(.1) with our OWN parse, then
+        # run OpenPath over a covering window and assert its per-action event counts
+        # EQUAL the independent counts. Ground truth is derived from the raw file, not
+        # from OpenPath — so this is a real cross-check, not producer-checks-producer.
+        import re as _re
+        logs = [Path("/var/log/dpkg.log"), Path("/var/log/dpkg.log.1")]
+        present = [p for p in logs if p.exists() and p.stat().st_size > 0]
+        if not present:
+            self.skipTest("no /var/log/dpkg.log on this host")
+        line_re = _re.compile(
+            r"^(\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d) "
+            r"(install|remove|purge|upgrade|downgrade) \S+ \S+ \S+\s*$")
+        truth = {}
+        dates = []
+        for p in present:
+            for ln in p.read_text(errors="replace").splitlines():
+                m = line_re.match(ln.strip())
+                if m:
+                    truth[m.group(3)] = truth.get(m.group(3), 0) + 1
+                    dates.append(m.group(1))
+        if not truth:
+            self.skipTest("no parseable dpkg transaction lines on this host")
+        # A window covering the full retained history (min date .. max date + 1d).
+        rc, out = _cli("--data-root", "/", "--facet", "packages", "--actor", "any",
+                       "--since", f"{min(dates)}T00:00:00",
+                       "--until", f"{max(dates)}T23:59:59",
+                       "--format", "json")
+        self.assertEqual(rc, 0, out)
+        events = json.loads(out)["finding"]["events"]
+        got = {}
+        for e in events:
+            a = (e.get("attrs") or {}).get("action")
+            got[a] = got.get(a, 0) + 1
+        for action, n in truth.items():
+            self.assertEqual(got.get(action, 0), n,
+                             f"dpkg {action}: OpenPath {got.get(action, 0)} != "
+                             f"independent ground truth {n}")
+
     def test_real_dpkg_or_dnf_parsed_when_present(self):
         cov = self.collected.ledger.get("packages")
         self.assertIsNotNone(cov)
