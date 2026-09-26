@@ -18,6 +18,7 @@ federated overview, the evidence list, and the gap ledger can never disagree.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from openpath.catalog import spec_for_facet
@@ -191,10 +192,39 @@ class Engine:
         if boots:
             ledger.first_boot = boots[0]
 
+        # Bundle capture-time: when analyzing an offline bundle that recorded when it
+        # was captured, that instant is the edge of observation for the whole snapshot
+        # (see CoverageLedger.snapshot_shortfall). Absent on a live host.
+        ledger.captured_at = self._read_captured_at(env)
+
         return Collected(
             events=all_events, ledger=ledger,
             passwd=env.read_passwd(), window=window,
         )
+
+    @staticmethod
+    def _read_captured_at(env: Env) -> Optional[datetime]:
+        """Parse the bundle capture-time marker, if the evidence carries one.
+
+        ``scripts/collect_bundle.sh`` stamps ``var/log/openpath/captured-at`` with an
+        RFC3339 instant when it snapshots a host. Reading it lets the ledger disclose
+        a window that reaches past the snapshot (see snapshot_shortfall). Any parse
+        failure returns ``None`` -- a missing/garbled marker must never fabricate a
+        capture time, only forgo the extra disclosure.
+        """
+        p = env.path("var/log/openpath/captured-at")
+        try:
+            text = p.read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:
+            return None
+        if not text:
+            return None
+        raw = text.splitlines()[0].strip().replace("Z", "+00:00")
+        try:
+            dt = datetime.fromisoformat(raw)
+        except ValueError:
+            return None
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
     def context_for(self, collected: Collected, username: str) -> AnalysisContext:
         account_events = [

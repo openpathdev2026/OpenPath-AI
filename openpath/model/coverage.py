@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import enum
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from openpath.model.timerange import TimeRange
@@ -75,6 +75,19 @@ class SourceCoverage:
     # rotated .1/.2 file was present). Only then does "earliest record is after
     # the window start" indicate a real blind spot rather than merely a quiet log.
     retention_bounded: bool = False
+    # How this source's data reached OpenPath -- disclosed so an analyst knows whether
+    # a quiet answer means "quiet" or "only as fresh as a dump":
+    #   "live"     -- read at analysis time, either directly from the on-host artifact
+    #                 (auditd log, wtmp, /proc, /etc state) or via a live tool call
+    #                 (journalctl on the real host). Observed up to now.
+    #   "export"   -- loaded from a pre-existing JSON export file (a journald dump),
+    #                 not produced by this run. journald's store is binary, so it must
+    #                 be exported; that export is only as fresh as when it was written.
+    # This is a per-source transparency signal. The *quantified* not-yet-observed tail
+    # for an offline snapshot is disclosed at the bundle level from the explicit
+    # capture-time marker (see CoverageLedger.captured_at / snapshot_shortfall), which
+    # bounds every source uniformly rather than guessing staleness from record age.
+    capture_mode: str = "live"
 
     def covers_window(self, window: TimeRange, effective_start: Optional[datetime] = None) -> bool:
         """True if this source can speak to the whole (effective) window.
@@ -150,6 +163,7 @@ class SourceCoverage:
             "unparseable": self.unparseable,
             "unparseable_detail": self.unparseable_detail,
             "retention_bounded": self.retention_bounded,
+            "capture_mode": self.capture_mode,
             "instrumentation": [c.to_dict() for c in self.instrumentation],
             "locations": list(self.locations),
         }
@@ -212,6 +226,13 @@ class CoverageLedger:
     # First system boot observed within the window, if any. Before it the machine
     # was down, so that sub-interval is not a blind spot -- nothing could happen.
     first_boot: Optional[datetime] = None
+    # When analyzing an offline evidence *bundle* that recorded its own capture
+    # time (the collector wrote a capture-time marker), this is that instant. It is
+    # the true edge of observation for the whole snapshot: nothing that happened
+    # after it can be in the bundle, so a requested window extending past it has a
+    # not-yet-observed tail. ``None`` when analyzing a live host (data_root "/") or a
+    # bundle with no marker -- then only per-source freshness/export signals apply.
+    captured_at: Optional[datetime] = None
 
     def add_source(self, cov: SourceCoverage) -> None:
         self.sources.append(cov)
@@ -303,12 +324,43 @@ class CoverageLedger:
                 ))
         return out
 
+    def snapshot_shortfall(self, tolerance_seconds: float = 120) -> List[Gap]:
+        """Bundle-level not-yet-observed tail: window asked about time after capture.
+
+        A live host is observed up to *now*, so "the last N minutes were quiet" is a
+        trustworthy negative. An offline **bundle** is observed only up to the instant
+        it was captured (``captured_at``). If the requested window extends past that
+        instant, the interval ``(captured_at, window.end]`` simply is not in the
+        bundle -- so a "nothing happened" over that tail is not-yet-observed, not
+        proven. This is the single, source-independent edge-of-observation for a
+        snapshot; ``tolerance_seconds`` absorbs clock skew between capture and
+        analysis. Fires only when ``captured_at`` is known (a marker was present).
+        """
+        if self.captured_at is None:
+            return []
+        cap = self.captured_at.astimezone(timezone.utc)
+        end = self.window.end.astimezone(timezone.utc)
+        if end <= cap + timedelta(seconds=tolerance_seconds):
+            return []
+        mins = int((end - cap).total_seconds() // 60)
+        return [Gap(
+            question="recency",
+            reason=(
+                f"this evidence bundle was captured {cap.isoformat()}, but the "
+                f"requested window extends to {end.isoformat()} ({mins} min later); "
+                f"activity after capture is NOT in the bundle, so any 'nothing "
+                f"happened' over that tail is not-yet-observed, not proven."),
+            source_id=None,
+            remedy="re-capture the bundle at (or after) the end of the window you "
+                   "are analyzing, or analyze the live host directly.",
+        )]
+
     def all_gaps(self) -> List[Gap]:
-        """Facet gaps + derived horizon shortfalls + conservation gaps, de-duped."""
+        """Facet gaps + horizon + conservation + snapshot tail, de-duped."""
         seen = set()
         out: List[Gap] = []
         for g in (list(self.gaps) + self.horizon_shortfalls()
-                  + self.conservation_gaps()):
+                  + self.conservation_gaps() + self.snapshot_shortfall()):
             key = (g.question, g.reason, g.source_id)
             if key not in seen:
                 seen.add(key)

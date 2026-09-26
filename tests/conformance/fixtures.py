@@ -643,6 +643,15 @@ class HostBuilder:
             self._persist_add("etc/ssh/sshd_config", f"{k} {v}")
         return self
 
+    def captured_at(self, at):
+        """Stamp the bundle capture-time marker (as collect_bundle.sh does).
+
+        Presence of this marker tells OpenPath the evidence is an offline snapshot
+        taken at ``at``; a window reaching past it has a not-yet-observed tail.
+        """
+        iso = at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        return self._persist_add("var/log/openpath/captured-at", iso)
+
     def rotate_logs(self):
         """Move everything accumulated so far into rotated (.1) files.
 

@@ -211,10 +211,24 @@ openpath-ai --data-root ./bundle --now 2026-09-25T12:00:00Z --tz UTC \
     --format json "what network activity did svc-01 perform in the last 24 hours?"
 ```
 
-Export the sshd journal into a bundle with:
-`journalctl _COMM=sshd -o json > var/log/openpath/journal-sshd.jsonl`
-(on a live host with no export present, OpenPath will invoke `journalctl` itself,
-best-effort).
+Export the journals into a bundle with
+`journalctl _COMM=sshd -o json > var/log/openpath/journal-sshd.jsonl` and
+`journalctl -o json > var/log/openpath/journal.jsonl` (on a live host with no export
+present, OpenPath invokes `journalctl` itself, best-effort). `scripts/collect_bundle.sh`
+does all of this and also stamps `var/log/openpath/captured-at` with the collection
+instant.
+
+### "Nothing happened" vs. "not yet observed"
+
+An empty answer must never masquerade as proof of absence. Each source is tagged
+`capture_mode` — `live` (read at analysis time; observed up to *now*) or `export`
+(loaded from a journald JSON dump; only as fresh as when it was dumped) — and the tag
+shows in `--coverage`. A bundle records its own capture instant (`captured-at`); if an
+analysis window reaches past it, the coverage ledger discloses the exact
+not-yet-observed tail rather than reporting the recent period as quiet. A live host
+has no such tail: every source is observed to the analysis instant. Staleness is never
+guessed from how old a source's newest record happens to be — a quiet live source
+stays a trustworthy negative.
 
 ## How gap disclosure works (the honest part)
 

@@ -109,6 +109,10 @@ class GeneralJournaldCollector(Collector):
             unparseable_detail=("journal line(s) that were not valid JSON"
                                 if unparseable else ""),
             locations=locations,
+            # A live journalctl read reflects the OS at analysis time (quiet == quiet);
+            # a JSON export is only as fresh as when it was dumped (disclosed; the
+            # bundle capture-time marker quantifies any not-yet-observed tail).
+            capture_mode="live" if live else "export",
             instrumentation=[InstrumentationCheck("general journal available", True)],
         )
         return CollectResult(events=events, coverage=cov)

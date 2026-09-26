@@ -38,11 +38,21 @@ for f in /var/log/dnf.rpm.log /var/log/dnf.rpm.log.1 /var/log/dnf.log \
 # Identity snapshots
 copy /etc/passwd
 copy /etc/group
-# sshd journal export (login origin / auth method)
+# sshd journal export (login origin / auth method) + general journal (system
+# lifecycle / non-SSH auth / lockout). journald's store is binary, so these are
+# exported to JSON -- a genuine capture step, which is why the ledger treats them
+# as snapshot ("export") sources whose recent tail may be not-yet-observed.
 mkdir -p "$DEST/var/log/openpath"
 if command -v journalctl >/dev/null; then
   journalctl _COMM=sshd -o json --no-pager > "$DEST/var/log/openpath/journal-sshd.jsonl" 2>/dev/null || true
+  journalctl -o json --no-pager      > "$DEST/var/log/openpath/journal.jsonl"      2>/dev/null || true
 fi
+
+# Capture-time marker: the edge of observation for this snapshot. OpenPath reads it
+# to disclose when an analysis window reaches past the moment the bundle was taken
+# (activity after this instant is simply not in the bundle). Written last so it
+# reflects the true end of collection.
+date -u +%Y-%m-%dT%H:%M:%SZ > "$DEST/var/log/openpath/captured-at"
 
 echo "bundle written to: $DEST"
 echo "analyze with:  openpath-ai --data-root '$DEST' --all-users --window 'last 24 hours'"

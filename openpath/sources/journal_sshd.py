@@ -176,6 +176,10 @@ class SshdJournalCollector(Collector):
             unparseable_detail=("journal line(s) that were not valid JSON"
                                 if unparseable else ""),
             locations=locations,
+            # Live journalctl == observed at analysis time; a JSON export is only as
+            # fresh as when it was dumped (disclosed; the bundle capture-time marker
+            # quantifies any not-yet-observed tail -- see CoverageLedger).
+            capture_mode="live" if live else "export",
             instrumentation=[InstrumentationCheck("sshd journal available", True)],
         )
         return CollectResult(events=events, coverage=cov)

@@ -26,6 +26,7 @@ for done-enough.
 | Attribution correctness | STRONG | auid-centric `Subject.matches` (survives sudo/su); `TestRootAttribution` + the adversarial `TestAttributionCorpus` (concurrent same-user sessions, multiple sudo chains that must not cross, nested su → login user, automation left unattributable); `TestMultiUserSweep` (no cross-attribution); wrong-user isolation in `TestQueryLayer`; TM-06 labels each action high/medium/low. Genuine ambiguity (overlapping direct root logins) is **disclosed, not guessed**. |
 | Session correlation | GOOD | audit `ses=` id now captured and used to group a user's concurrent sessions (`TestAttributionCorpus`); session intervals + overlap (IA-05), still-open (IA-04), reboot-terminated (SL-03), concurrent cross-user (TM-13). *Caveat: `ses` groups audited actions into sessions but is not yet bridged to the wtmp session's origin, so mapping one audited action to a specific overlapping wtmp session is disclosed as ambiguous rather than asserted.* |
 | Freshness measurement | STRONG | per-source retention horizon + `freshness_seconds`/`is_stale` (age of newest record vs the analysis anchor), surfaced in `--coverage`; `test_freshness_and_staleness_measure`. A source with no timestamped record reports freshness `None`, never a fabricated "fresh". |
+| Capture latency | STRONG | every source is tagged `capture_mode` (`live` = observed now, or `export` = a journald dump) and the tag is surfaced in `--coverage`; an offline bundle stamps its own capture time (`captured-at` marker) and a window reaching past it discloses the not-yet-observed tail (`snapshot_shortfall`); `TestCaptureLatency`. Record *age* is never mistaken for capture staleness — a quiet live source stays a trustworthy negative. |
 | Log rotation handling | STRONG | reads rotated `.1` files; `retention_bounded` + `horizon_shortfalls()`; `test_event_split_across_rotation_is_reunited`; a genuine retention gap is disclosed, a merely-quiet log is not. |
 | Restart / recovery | STRONG (by design) | stateless CLI (collect → analyze → exit); no persistent state to corrupt or recover; a re-run is idempotent; `TestStreaming` proves bounded memory on large/rotated logs. |
 | Real-host validation | VALIDATED | `tests/live/test_live_host.py` runs every facet against the real `/` filesystem — no facet raises, every event cited, gaps disclosed; run on this container it parsed real `/etc/cron.d`, `/etc/group` (ubuntu in sudo/adm), `/etc/shadow` (`_apt` locked), `/proc/net`. *Caveat: a fully-instrumented, rule-loaded auditd host still needs an operator to drive `scripts/live_conformance.sh`.* |
@@ -47,6 +48,41 @@ A permanent **CONTRACTED** state is a work item, never a resting place: build th
 capability, or exclude the question on the record. At this milestone CONTRACTED is
 0 and nothing is excluded — the runtime boundaries below are scope limits on
 *hosts*, not exclusions of *questions*.
+
+## Capture latency: "nothing happened" vs. "not yet observed"
+
+The single most dangerous way a forensic answer misleads is an empty result that
+*looks* like proof of absence. "No activity found" has two very different meanings,
+and OpenPath keeps them apart:
+
+- **Nothing happened.** The source was observed right up to the analysis instant and
+  recorded nothing. Trustworthy negative.
+- **Not yet observed.** The source's view ends before the analysis instant, so the
+  recent tail simply is not in the evidence. An empty result there is *unknown*, not
+  *no*.
+
+Two mechanisms make the difference explicit, and neither guesses staleness from how
+old a source's newest record happens to be (a quiet source is not a stale one):
+
+1. **Per-source `capture_mode`** — every `SourceCoverage` is tagged `live` (read at
+   analysis time: the on-host log/`/proc`/`/etc` artifact, or a live `journalctl`
+   call — observed up to *now*) or `export` (loaded from a pre-existing journald JSON
+   dump — journald's store is binary and must be exported, so it is only as fresh as
+   when it was dumped). The tag is shown per source in `--coverage`, so an analyst can
+   see which answers rest on a live read and which on a snapshot.
+
+2. **Bundle capture-time marker** — `scripts/collect_bundle.sh` stamps
+   `var/log/openpath/captured-at` with the instant collection finished. That is the
+   edge of observation for the whole snapshot. If an analysis window reaches past it,
+   `CoverageLedger.snapshot_shortfall` discloses the exact not-yet-observed tail
+   (`(captured_at, window.end]`) with a remedy — recapture, or analyze the live host.
+   A live analysis has no marker and every source is `live`, so a recent negative is
+   trustworthy without caveat.
+
+This is a per-source *and* per-bundle answer to "what is the lifecycle from activity
+to answer": a live host is queryable within collector latency (seconds); a bundle is
+queryable up to its stamped capture instant, and everything after is disclosed as
+unobserved rather than silently reported as quiet.
 
 ## What CERTIFIED means (and does not)
 
@@ -127,9 +163,10 @@ remedied UNANSWERABLE without it:
 
 - 153 / 153 questions CERTIFIED (CONTRACTED 0).
 - 29 facets, 16 collectors, ~11k LOC, zero third-party dependencies (stdlib only).
-- 233 conformance tests green, including adversarial cases (wrong-user isolation,
+- 245 conformance tests green, including adversarial cases (wrong-user isolation,
   scoped-negative-not-absolute, provenance, path-boundary, contradictory flags,
-  read-not-a-write, reply-tuple direction, bare-host disclosure).
+  read-not-a-write, reply-tuple direction, bare-host disclosure, adversarial
+  attribution corpus, live-vs-snapshot capture latency).
 
 ## How to reproduce
 

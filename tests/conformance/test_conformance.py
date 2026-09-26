@@ -2767,6 +2767,99 @@ class TestAttributionCorpus(Base):
         self.assertIsNone(attr.actor)
 
 
+class TestCaptureLatency(Base):
+    """Capture latency: the trust distinction between 'nothing happened' (a quiet
+    LIVE source, trustworthy) and 'not yet observed' (a stale SNAPSHOT/export source,
+    or a bundle captured before the end of the analysis window). A forensic tool must
+    never present the second as the first. Proven at three layers: per-source
+    capture_mode, per-source recency gaps for stale exports, and a bundle-level
+    not-yet-observed tail."""
+
+    def test_a_quiet_source_is_not_a_not_yet_observed_gap(self):
+        # The soundness fix: a source whose newest record is old is NOT, by that alone,
+        # not-yet-observed. Whether the last record is 30s or 3h old, with no bundle
+        # capture-time marker the ledger emits NO recency gap -- record age measures
+        # "how long since something happened", not "how long since we last looked".
+        from openpath.model.coverage import (
+            CoverageLedger, SourceCoverage, SourceStatus)
+        for age_h in (0, 2, 12):
+            led = CoverageLedger(window=self.win())        # no captured_at marker
+            led.add_source(SourceCoverage(
+                "journal.sshd", SourceStatus.AVAILABLE,
+                horizon_end=NOW - timedelta(hours=age_h), record_count=1,
+                capture_mode="export"))
+            recency = [g for g in led.all_gaps() if g.question == "recency"]
+            self.assertEqual(recency, [], f"invented a tail gap at age={age_h}h")
+
+    def test_snapshot_shortfall_only_fires_with_a_capture_marker(self):
+        # The quantified not-yet-observed tail comes from the explicit capture time.
+        from openpath.model.coverage import CoverageLedger
+        # No marker -> no tail, even though window ends "now".
+        led = CoverageLedger(window=self.win())
+        self.assertEqual(led.snapshot_shortfall(), [])
+        # Captured 3h before the window end -> the 3h since capture are unobserved.
+        led.captured_at = NOW - timedelta(hours=3)
+        tail = led.snapshot_shortfall()
+        self.assertEqual(len(tail), 1)
+        self.assertEqual(tail[0].question, "recency")
+        self.assertIsNone(tail[0].source_id)               # bundle-wide, not one source
+        self.assertIn("not-yet-observed", tail[0].reason)
+        # Captured AT the window end (fresh) -> nothing unobserved.
+        led.captured_at = NOW
+        self.assertEqual(led.snapshot_shortfall(), [])
+
+    def test_bundle_captured_before_window_end_discloses_tail(self):
+        # An offline bundle captured 3h ago, analyzed with window end == now: the 3h
+        # since capture are not in the bundle -> a bundle-level not-yet-observed tail.
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.enable_execve()
+        h.exec(1001, 1001, ["ls"], "/usr/bin/ls", ago(hours=4), comm="ls")
+        h.captured_at(ago(hours=3))
+        h.write()
+        rc, out = self.cli("--coverage", "--format", "json", "--data-root", str(root))
+        self.assertEqual(rc, 0, out)
+        gaps = json.loads(out)["coverage"]["gaps"]
+        tail = [g for g in gaps
+                if g.get("question") == "recency" and not g.get("source_id")]
+        self.assertTrue(tail, "bundle captured before window end not disclosed")
+        self.assertIn("captured", tail[0]["reason"])
+        self.assertIn("not-yet-observed", tail[0]["reason"])
+
+    def test_bundle_capture_covers_window_no_false_gap(self):
+        # A bundle captured AT the window end (fresh): no bundle-level tail invented.
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.enable_execve()
+        h.exec(1001, 1001, ["ls"], "/usr/bin/ls", ago(hours=1), comm="ls")
+        h.captured_at(NOW)
+        h.write()
+        rc, out = self.cli("--coverage", "--format", "json", "--data-root", str(root))
+        self.assertEqual(rc, 0, out)
+        gaps = json.loads(out)["coverage"]["gaps"]
+        self.assertFalse([g for g in gaps if g.get("question") == "recency"
+                          and not g.get("source_id")],
+                         "a bundle covering the window must not invent a tail gap")
+
+    def test_capture_mode_surfaced_per_source_in_coverage(self):
+        # The per-source capture_mode is visible in --coverage so an analyst can see,
+        # for every source, whether a quiet answer means quiet (live) or maybe-stale.
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.enable_execve()
+        h.exec(1001, 1001, ["ls"], "/usr/bin/ls", ago(minutes=5), comm="ls")
+        h.ssh_accept("alice", "10.0.0.5", ago(minutes=5))
+        h.write()
+        rc, out = self.cli("--coverage", "--format", "json", "--data-root", str(root))
+        self.assertEqual(rc, 0, out)
+        srcs = {s["source_id"]: s for s in json.loads(out)["coverage"]["sources"]}
+        self.assertEqual(srcs["auditd"]["capture_mode"], "live")
+        self.assertEqual(srcs["journal.sshd"]["capture_mode"], "export")
+
+
 class TestContentAndReputation(Base):
     """Certifies the two enrichment-evidence questions: FS-13 (file content
     before/after from a file-integrity monitor) and IA-10 (login-origin reputation
