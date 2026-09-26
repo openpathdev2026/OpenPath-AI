@@ -181,6 +181,31 @@ _BY_FACET.setdefault(
 # Package policy / provenance is host-level (repos, version-locks, signature
 # policy, coverage), so NOT federated into per-user Core. Its state source alone
 # makes it answerable.
+_PROCTREE_SPEC = _S(certified=[["auditd(execve audit rule)"]], fatal=["auditd"])
+_BY_FACET.setdefault(
+    "process_tree",
+    CatalogQuestion(
+        "EX-11",
+        "What was the parent process and process ancestry of {user}'s commands?",
+        "process_tree", ("auditd",), True, _PROCTREE_SPEC),
+)
+
+_SHELLHIST_SPEC = _S(certified=[["shell_history"]], fatal=["shell_history"])
+_BY_FACET.setdefault(
+    "shell_history",
+    CatalogQuestion(
+        "EX-12", "What commands did {user} type in their interactive shell?",
+        "shell_history", ("shell_history",), True, _SHELLHIST_SPEC),
+)
+
+_FIREWALL_SPEC = _S(certified=[["firewall"]], fatal=["firewall"])
+_BY_FACET.setdefault(
+    "firewall",
+    CatalogQuestion(
+        "NW-09", "What firewall / packet-filter rules are in place?",
+        "firewall", ("firewall",), True, _FIREWALL_SPEC),
+)
+
 _PKGPOLICY_SPEC = _S(certified=[["pkgpolicy"]], fatal=["pkgpolicy"])
 _BY_FACET.setdefault(
     "pkg_policy",

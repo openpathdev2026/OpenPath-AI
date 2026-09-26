@@ -5,7 +5,7 @@ The full set of user-facing forensic questions OpenPath commits to, each with a
 count is an output of the analysis, not a target. Certification is a property of
 a question, not a limit on which questions exist.
 
-**153 questions** — CERTIFIED 132, CONTRACTED 21.
+**153 questions** — CERTIFIED 135, CONTRACTED 18.
 
 - **CERTIFIED** — wired and proven end-to-end today (see `catalog.py` + the
   conformance suite). Complete *within the covered evidence scope*, never absolute.
@@ -61,6 +61,8 @@ a question, not a limit on which questions exist.
 | EX-08 | When did {user} run commands — first, last, and the execution timeline? | `commands` | auditd(execve audit rule), auth, wtmp |
 | EX-09 | Did {user}'s command executions succeed or fail (and which errored)? | `commands` | auditd(execve audit rule) |
 | EX-10 | What scripts or interpreted programs did {user} execute (python/bash/perl scripts)? | `commands` | auditd(execve audit rule), auth |
+| EX-11 | What was the parent process and process ancestry of {user}'s commands (reconstruct the process tree)? | `process_tree` | auditd(execve audit rule), wtmp |
+| EX-12 | What commands did {user} type in their shell (interactive shell history)? | `shell_history` | shell-history collector, auditd(execve audit rule) |
 | FS-01 | Did {user} modify sensitive system or authentication config files (/etc/passwd, /etc/shadow, /etc/sudoers(.d), /etc/ssh/sshd_config, /etc/pam.d, cron files)? | `files` | auditd(host-wide file-change rule), auditd(file watch/modify audit rule), wtmp |
 | FS-02 | Did {user} create or drop files in suspicious/transient locations (/tmp, /dev/shm, /var/tmp, web roots, another user's home)? | `files` | auditd(host-wide file-change rule), auditd(file watch/modify audit rule), wtmp |
 | FS-03 | Did {user} delete, truncate, or wipe files (data destruction / evidence removal)? | `files` | auditd(host-wide file-change rule), auditd(file watch/modify audit rule), wtmp |
@@ -87,6 +89,7 @@ a question, not a limit on which questions exist.
 | NW-03 | Did {user} exhibit anomalous outbound behavior — beaconing, connection fan-out (scanning), or rare/high ports? | `network` | auditd(connect audit rule) |
 | NW-05 | What ports or sockets did {user} bind or listen on — any new listeners or backdoors? | `network` | auditd(bind audit rule) |
 | NW-07 | What local (UNIX-domain) socket connections did {user} make — e.g. to docker.sock or D-Bus/systemd sockets? | `network` | auditd(connect audit rule) |
+| NW-09 | What firewall / packet-filter rules are in place, and did {user} change them? | `firewall` | nftables/iptables collector, auditd(execve audit rule) |
 | NW-11 | Did {user} change network interface, routing, VPN, or NetworkManager configuration? | `files` | NetworkManager/VPN collector, auditd(execve audit rule), auditd(host-wide file-change rule) |
 | NW-13 | Can {user} be affirmatively cleared of network activity (an evidenced negative)? | `network` | auditd(connect audit rule), auditd(bind audit rule) |
 | PK-01 | What software changed on this host overall during the window, and when — regardless of who did it? | `packages` | packages |
@@ -175,12 +178,6 @@ a question, not a limit on which questions exist.
 |----|----------|-------|-------------|
 | NW-08 | What DNS lookups / name-resolution queries did {user} perform (C2 domains, DNS tunneling)? | NEW:dns | Query names/answers unmodeled; only post-resolution IPs surface, and only if the resolved host was subsequently connected to; a connect t... |
 
-### Needs: No new external source — leaf pid/ppid/tty are already captured — but requires a NEW process-ancestry facet AND a fork/clone (and ideally exit) audit rule + syscall-table entries so fork-only intermediaries do not break lineage.  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| EX-11 | What was the parent process and process ancestry of {user}'s commands (reconstruct the process tree)? | NEW:process_tree | fork/clone syscalls are NOT in the auditd syscall tables and no facet chains pid→ppid; PID reuse; kernel-thread/daemon roots have no logi... |
-
 ### Needs: auditd socket() syscall collection (record the socket type/protocol at creation) — within auditd's reach but not currently parsed or gated  (1)
 
 | ID | Question | Facet | Blind spots |
@@ -240,18 +237,6 @@ a question, not a limit on which questions exist.
 | ID | Question | Facet | Blind spots |
 |----|----------|-------|-------------|
 | NW-04 | How much data did {user} transfer, and is there evidence of data exfiltration over a connection? | NEW:netflow | auditd records the connect syscall (that a channel opened and to where), never how many bytes flowed, in which direction, or for how long. |
-
-### Needs: nftables/iptables collector (nft list ruleset, iptables-save/ip6tables-save, /etc/nftables.conf, ipset)  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| NW-09 | What firewall / packet-filter rules are in place, and did {user} change them? | NEW:firewall | The network facet sees connect/bind syscalls only — never filter policy, chains, or whether a rule would allow/deny a flow; a rule-changi... |
-
-### Needs: shell-history collector (~/.bash_history, ~/.zsh_history, fish_history, incl. root; HISTTIMEFORMAT timestamps)  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| EX-12 | What commands did {user} type in their shell (interactive shell history)? | NEW:shell_history | History is untrusted (editable, HISTSIZE-bounded, often timestamp-less), misses builtins vs external; process-level execution via the com... |
 
 ### Needs: web/proxy/cloud audit-log collector (nginx/apache access logs, forward-proxy logs, cloud provider audit trail)  (1)
 

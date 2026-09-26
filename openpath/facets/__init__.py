@@ -16,12 +16,15 @@ from openpath.facets.accounts import AccountsFacet, GroupsFacet
 from openpath.facets.authorization import AuthorizationFacet
 from openpath.facets.base import AnalysisContext, Facet
 from openpath.facets.files import FilesFacet
+from openpath.facets.firewall import FirewallFacet
 from openpath.facets.lifecycle import SystemLifecycleFacet
 from openpath.facets.meta import CoreFacet, EvidenceFacet, GapsFacet
 from openpath.facets.network import NetworkFacet
 from openpath.facets.packages import PackagesFacet
 from openpath.facets.persistence import PersistenceFacet
 from openpath.facets.pkgpolicy import PackagePolicyFacet
+from openpath.facets.proctree import ProcessTreeFacet
+from openpath.facets.shell_history import ShellHistoryFacet
 from openpath.facets.privilege import (
     CommandsFacet,
     PrivilegeFacet,
@@ -57,8 +60,11 @@ FAMILIES: List[FamilySpec] = [
     FamilySpec(14, "authorization", "Authorization", AuthorizationFacet),
     FamilySpec(15, "system_lifecycle", "System lifecycle", SystemLifecycleFacet),
     FamilySpec(16, "pkg_policy", "Package policy", PackagePolicyFacet),
-    FamilySpec(17, "evidence", "Evidence", EvidenceFacet),
-    FamilySpec(18, "gaps", "Gaps", GapsFacet),
+    FamilySpec(17, "process_tree", "Process ancestry", ProcessTreeFacet),
+    FamilySpec(18, "shell_history", "Shell history", ShellHistoryFacet),
+    FamilySpec(19, "firewall", "Firewall", FirewallFacet),
+    FamilySpec(20, "evidence", "Evidence", EvidenceFacet),
+    FamilySpec(21, "gaps", "Gaps", GapsFacet),
 ]
 
 _BY_NAME: Dict[str, FamilySpec] = {spec.name: spec for spec in FAMILIES}

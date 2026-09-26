@@ -67,6 +67,14 @@ class EventType(enum.Enum):
     # Boots come from wtmp as BOOT; these complement them for the lifecycle picture.
     SYSTEM = "system"
 
+    # Interactive shell history (typed commands, from ~/.bash_history etc.).
+    # Deliberately DISTINCT from EXEC: it is user-editable, usually un-timestamped,
+    # and not proof of execution, so it must never be conflated with audited execs.
+    SHELL_HISTORY = "shell_history"
+
+    # Firewall / packet-filter configuration state (nftables/iptables ruleset).
+    FIREWALL = "firewall"
+
     # Network
     NETWORK = "network"          # connect/bind/listen
 
@@ -166,6 +174,10 @@ class Event:
                     or self.summary)
         if t is EventType.PKG_POLICY:
             return ("pkg-policy", a.get("artifact") or a.get("kind") or self.summary)
+        if t is EventType.SHELL_HISTORY:
+            return ("command", a.get("cmdline") or self.summary)
+        if t is EventType.FIREWALL:
+            return ("firewall-rule", a.get("artifact") or a.get("rule") or self.summary)
         if t is EventType.PRIVILEGE_ESCALATION:
             if a.get("cmd"):
                 return ("command", a.get("cmd"))

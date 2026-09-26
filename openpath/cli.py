@@ -135,6 +135,8 @@ def _facet_event_types(facet_name):
         "packages": (E.PACKAGE_CHANGE,), "network": (E.NETWORK,),
         "persistence": (E.PERSISTENCE,), "authorization": (E.AUTHZ,),
         "system_lifecycle": (E.BOOT, E.SYSTEM), "pkg_policy": (E.PKG_POLICY,),
+        "process_tree": (E.EXEC,), "shell_history": (E.SHELL_HISTORY,),
+        "firewall": (E.FIREWALL,),
     }.get(facet_name, ())
 
 

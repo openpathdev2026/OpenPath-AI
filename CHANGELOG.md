@@ -6,6 +6,19 @@ based on Keep a Changelog; dates are UTC.
 ## [Unreleased]
 
 ### Added
+- **Process ancestry, shell history, and firewall (135 total).** EX-11: a
+  process-ancestry facet reconstructs the parent process and exec chain of a user's
+  commands from the ``pid``/``ppid`` auditd already records -- linking a child's
+  ppid to the exec whose pid matches -- and discloses (as a scope note, not a
+  fabricated parent) that fork/clone without exec is not reconstructable. EX-12: a
+  shell-history collector + facet reads ``~/.bash_history``/``~/.zsh_history`` as a
+  deliberately weak, heavily-disclosed source -- a distinct ``EventType.SHELL_HISTORY``
+  so it is never conflated with audited execution (a regression test proves typed
+  history does not leak into the Commands answer). NW-09: a firewall collector reads
+  the on-host nftables/iptables ruleset (config files or a saved dump), emitting
+  chain policies and rules and flagging a permissive default-ACCEPT input chain;
+  it discloses that drop *events* (NW-10) need firewall logging. Proven in
+  `TestProcessShellFirewall`.
 - **Deterministic analytics + correlation questions certified (132 total).** Each
   a stated-policy or cited-correlation answer computed from the evidence already
   collected -- no external feed, no ML: IA-09 (off-hours logins, against a stated

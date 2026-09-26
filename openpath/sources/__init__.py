@@ -11,6 +11,8 @@ from openpath.sources.auditd import AuditdCollector
 from openpath.sources.auth import SyslogAuthCollector
 from openpath.sources.authz import AuthzCollector
 from openpath.sources.base import CollectResult, Collector
+from openpath.sources.firewall import FirewallCollector
+from openpath.sources.shell_history import ShellHistoryCollector
 from openpath.sources.btmp import BtmpCollector
 from openpath.sources.journal_sshd import SshdJournalCollector
 from openpath.sources.journald import GeneralJournaldCollector
@@ -32,6 +34,8 @@ def default_collectors() -> List[Collector]:
         AuthzCollector(),
         GeneralJournaldCollector(),
         PkgPolicyCollector(),
+        ShellHistoryCollector(),
+        FirewallCollector(),
     ]
 
 
@@ -48,5 +52,7 @@ __all__ = [
     "PersistenceCollector",
     "AuthzCollector",
     "PkgPolicyCollector",
+    "ShellHistoryCollector",
+    "FirewallCollector",
     "default_collectors",
 ]

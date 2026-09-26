@@ -174,17 +174,19 @@ class HostBuilder:
     # -- auditd syscall events ---------------------------------------------- #
 
     def exec(self, auid, uid, argv, exe, at, cwd="/root", euid=None,
-             key="exec", comm=None, arch="x86_64", success="yes", exit_code=0):
+             key="exec", comm=None, arch="x86_64", success="yes", exit_code=0,
+             pid=None, ppid=1000):
         euid = uid if euid is None else euid
         comm = comm or (argv[0] if argv else "prog")
         sid = next(self._serial)
         aid = f"{_epoch_msec(at)}:{sid}"
+        pid = pid if pid is not None else int(f"3{sid}")
         keyfield = f' key="{key}"' if key else ""
         archhex = "c00000b7" if arch == "aarch64" else "c000003e"
         execno = 221 if arch == "aarch64" else SYS["execve"]
         self._audit.append(
             f"type=SYSCALL msg=audit({aid}): arch={archhex} syscall={execno} "
-            f"success={success} exit={exit_code} ppid=1000 pid=3{sid} auid={auid} uid={uid} gid=0 "
+            f"success={success} exit={exit_code} ppid={ppid} pid={pid} auid={auid} uid={uid} gid=0 "
             f"euid={euid} suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=pts0 ses=3 "
             f'comm="{comm}" exe="{exe}"{keyfield}')
         argfields = " ".join(f'a{i}="{a}"' for i, a in enumerate(argv))
@@ -471,6 +473,32 @@ class HostBuilder:
     def pkg_manager_log(self, rel):
         """Touch a package-manager log OpenPath does not parse (PK-14 coverage)."""
         self._persist.setdefault(rel, ["(present)"])
+        return self
+
+    def bash_history(self, user, *cmds):
+        rel = f"home/{user}/.bash_history"
+        for c in cmds:
+            self._persist_add(rel, c)
+        return self
+
+    def zsh_history(self, user, *entries):
+        """entries are (epoch, cmd) for timestamped, or plain cmd strings."""
+        rel = f"home/{user}/.zsh_history"
+        for e in entries:
+            if isinstance(e, tuple):
+                self._persist_add(rel, f": {int(e[0])}:0;{e[1]}")
+            else:
+                self._persist_add(rel, e)
+        return self
+
+    def iptables_rules(self, *lines):
+        """Lines of an iptables-save dump (e.g. ':INPUT ACCEPT [0:0]', '-A INPUT ...')."""
+        for ln in lines:
+            self._persist_add("etc/iptables/rules.v4", ln)
+        return self
+
+    def nftables(self, text):
+        self._persist["etc/nftables.conf"] = text.splitlines()
         return self
 
     # -- general journal (system lifecycle) ---------------------------------- #
