@@ -35,6 +35,7 @@ SYS = {
     "execve": 59, "connect": 42, "bind": 49, "listen": 50,
     "unlink": 87, "rename": 82, "chmod": 90, "chown": 92,
     "creat": 85, "openat": 257, "truncate": 76,
+    "symlink": 88, "symlinkat": 266, "link": 86, "linkat": 265, "mknod": 133,
 }
 
 

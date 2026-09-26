@@ -59,6 +59,9 @@ class QuerySpec:
     direction: str = ""                    # network direction (outbound/inbound)
     as_root: Optional[bool] = None         # True: only root-privileged events; False: only non-root
     via_sudo: Optional[bool] = None        # True: only sudo-invoked; False: only non-sudo
+    result: str = ""                       # "success" | "failed" -- outcome of the action
+    target_user: str = ""                  # the identity switched TO (sudo -u / su target)
+    tty: str = ""                          # controlling terminal (substring; "" = any)
     pivot: str = PIVOT_CHRONOLOGICAL
 
     def describe(self) -> str:
@@ -82,6 +85,12 @@ class QuerySpec:
             bits.append("via sudo")
         elif self.via_sudo is False:
             bits.append("not via sudo")
+        if self.result:
+            bits.append(f"result={self.result}")
+        if self.target_user:
+            bits.append(f"switched to {self.target_user}")
+        if self.tty:
+            bits.append(f"tty~{self.tty}")
         if self.sources:
             bits.append(f"from source {{{', '.join(self.sources)}}}")
         return "; ".join(bits)
@@ -90,11 +99,28 @@ class QuerySpec:
     def is_filtered(self) -> bool:
         return bool(self.actions or self.object_paths or self.object_contains
                     or self.command_contains or self.direction or self.sources
-                    or self.as_root is not None or self.via_sudo is not None)
+                    or self.as_root is not None or self.via_sudo is not None
+                    or self.result or self.target_user or self.tty)
 
 
 def _event_is_root(e: Event) -> bool:
     return bool(e.uid == 0 or e.attrs.get("euid") == 0 or e.attrs.get("as_root"))
+
+
+def _event_result(e: Event) -> str:
+    """Normalize an event's outcome to 'success' | 'failed' | '' (unknown)."""
+    a = e.attrs
+    res = str(a.get("res") or a.get("result") or "").lower()
+    if res in ("failed", "denied", "fail"):
+        return "failed"
+    if res in ("success", "accepted", "ok"):
+        return "success"
+    succ = str(a.get("success") or "").lower()
+    if succ == "no":
+        return "failed"
+    if succ == "yes":
+        return "success"
+    return ""
 
 
 def _command_text(e: Event) -> str:
@@ -163,6 +189,12 @@ def matches(e: Event, spec: QuerySpec, subject: Optional[Subject]) -> bool:
     if spec.as_root is not None and _event_is_root(e) != spec.as_root:
         return False
     if spec.via_sudo is not None and bool(e.attrs.get("via_sudo")) != spec.via_sudo:
+        return False
+    if spec.result and _event_result(e) != spec.result:
+        return False
+    if spec.target_user and e.attrs.get("target_user") != spec.target_user:
+        return False
+    if spec.tty and spec.tty not in str(e.attrs.get("tty") or ""):
         return False
     return True
 

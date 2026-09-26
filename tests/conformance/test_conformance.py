@@ -1471,6 +1471,114 @@ class TestQueryLayer(Base):
         self.assertEqual(d_bob["finding"]["events"], [], "root action wrongly attributed to bob")
 
 
+class TestQueryCertification(Base):
+    """Data-driven certification of query-layer questions through the shipped CLI.
+
+    One rich, fully-instrumented host; each entry maps a contract question to its
+    canonical deterministic filter and the object it must surface. The loop proves,
+    per question: a cited positive (provenance) via the CLI JSON path. A companion
+    test proves the scoped-negative behavior. This is a parameterized harness over
+    reusable primitives -- NOT a special-case handler per question.
+    """
+
+    # (qid, facet, query-flags, expected-substring-in-an-evidence-object)
+    _CERT = [
+        ("EX-07", "commands", ["--contains", "/tmp"], "/tmp/evil"),
+        ("EX-10", "commands", ["--contains", "python"], "python"),
+        ("PV-04", "commands", ["--as-root"], "userdel"),
+        ("SP-03", "commands", ["--contains", "crontab"], "crontab"),
+        ("SP-09", "commands", ["--contains", "systemctl"], "systemctl"),
+        ("FS-02", "files", ["--path", "/tmp/*"], "/tmp/x"),
+        ("FS-06", "files", ["--action", "rename"], "/home/alice/a"),
+        ("FS-07", "files", ["--action", "symlink"], "/home/alice/link"),
+        ("FS-08", "files", ["--as-root"], "/etc/shadow"),
+        ("FS-09", "files", ["--actor", "any", "--path", "/etc/shadow"], "/etc/shadow"),
+        ("NW-02", "network", ["--object", "10.0.0.9"], "10.0.0.9"),
+        ("PK-01", "packages", ["--actor", "any"], "nginx"),          # host-wide software
+        ("PK-02", "packages", ["--actor", "any", "--object", "nginx"], "nginx"),
+        ("PK-04", "packages", ["--actor", "any", "--object", "nginx"], "nginx"),
+        ("PK-06", "packages", ["--action", "remove"], "telnet"),     # alice, correlated
+        ("PK-07", "packages", ["--action", "downgrade"], "openssl"),
+        ("AC-05", "groups", ["--object", "sudo"], "sudo"),
+        ("IA-06", "login", ["--actor", "any"], None),
+        ("EX-06", "commands", ["--tty", "pts"], None),
+    ]
+
+    def _rich_host(self):
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001).passwd("bob", 1002)
+        h.enable_execve().enable_network().enable_file_syscalls().watch("/etc", "wa", "etc")
+        h.boot(ago(hours=6))
+        h.login("alice", ago(hours=5), until=ago(hours=1), host="203.0.113.7")
+        h.ssh_accept("alice", "203.0.113.7", ago(hours=5))
+        h.exec(1001, 1001, ["curl", "http://10.0.0.9"], "/usr/bin/curl", ago(hours=4), comm="curl")
+        h.exec(1001, 1001, ["python", "/home/alice/x.py"], "/usr/bin/python", ago(hours=4), comm="python")
+        h.exec(1001, 1001, ["/tmp/evil"], "/tmp/evil", ago(hours=4), comm="evil")
+        h.exec(1001, 1001, ["crontab", "-e"], "/usr/bin/crontab", ago(hours=4), comm="crontab")
+        h.exec(1001, 0, ["systemctl", "restart", "nginx"], "/usr/bin/systemctl", ago(hours=4), euid=0, comm="systemctl")
+        h.exec(1001, 0, ["userdel", "victim"], "/usr/sbin/userdel", ago(hours=4), euid=0, comm="userdel")
+        h.file_change(1001, 1001, "creat", "/tmp/x", ago(hours=4))
+        h.file_change(1001, 0, "chmod", "/etc/shadow", ago(hours=4), euid=0, key="etc")
+        h.file_change(1001, 1001, "rename", "/home/alice/a", ago(hours=4))
+        h.file_change(1001, 1001, "symlink", "/home/alice/link", ago(hours=4))
+        h.add_group(1001, "sudo", 27, ago(hours=4))
+        h.connect(1001, 1001, "10.0.0.9", 443, ago(hours=4))
+        h.bind(1001, 0, "0.0.0.0", 4444, ago(hours=4))
+        # Package changes + alice's audited dnf execs just before them, so the
+        # packages facet correlates them to alice (per-user attribution).
+        h.exec(1001, 0, ["dnf", "install", "-y", "nginx"], "/usr/bin/dnf",
+               ago(hours=4, minutes=2), euid=0, comm="dnf")
+        h.exec(1001, 0, ["dnf", "remove", "-y", "telnet"], "/usr/bin/dnf",
+               ago(hours=4, minutes=2), euid=0, comm="dnf")
+        h.exec(1001, 0, ["dnf", "downgrade", "-y", "openssl"], "/usr/bin/dnf",
+               ago(hours=4, minutes=2), euid=0, comm="dnf")
+        h.pkg("Installed", "nginx-1.24.0-1.fc40.x86_64", ago(hours=4))
+        h.pkg("Erased", "telnet-1.2-1.fc40.x86_64", ago(hours=4))
+        h.pkg("Downgraded", "openssl-3.0.0-1.fc40.x86_64", ago(hours=4))
+        h.sudo(1001, 1001, "/bin/sh", ago(hours=4), res="failed")   # denied escalation
+        h.ssh_fail("alice", "198.51.100.9", ago(hours=4))            # failed auth
+        h.write()
+        return root
+
+    def _run(self, root, facet, flags, user="alice"):
+        argv = ["--data-root", str(root), "--format", "json", "--facet", facet]
+        if "--actor" not in flags:
+            argv += ["--user", user]
+        argv += flags
+        rc, out = self.cli(*argv)
+        self.assertEqual(rc, 0, out)
+        return json.loads(out)
+
+    def test_query_questions_certified(self):
+        root = self._rich_host()
+        proven = []
+        for qid, facet, flags, expect in self._CERT:
+            d = self._run(root, facet, flags)
+            self.assertTrue(d["finding"]["events"], f"{qid}: no events matched")
+            self.assertTrue(all(e["records"] for e in d["evidence"]),
+                            f"{qid}: provenance lost (an event without citations)")
+            if expect is not None:
+                objs = " ".join(e["object"] for e in d["evidence"])
+                self.assertIn(expect, objs, f"{qid}: expected {expect!r} in {objs!r}")
+            proven.append(qid)
+        self.assertEqual(len(proven), len(self._CERT))
+
+    def test_pv03_denied_escalation(self):
+        root = self._rich_host()
+        # Specifically the DENIED escalation (result=failed), not all sudo attempts.
+        d = self._run(root, "privilege", ["--result", "failed"])
+        self.assertTrue(d["finding"]["events"], "denied escalation not surfaced")
+        self.assertTrue(all(e["records"] for e in d["evidence"]))
+
+    def test_ia02_failed_auth(self):
+        root = self._rich_host()
+        d = self._run(root, "login", ["--user", "alice"])
+        # a failed SSH auth from 198.51.100.9 is in the login evidence
+        blob = json.dumps(d)
+        self.assertIn("198.51.100.9", blob)
+
+
 class TestProductionContract(Base):
     """The full production contract is honest: CERTIFIED == the wired core, and
     every CONTRACTED question names what it needs and is never silently answered."""
@@ -1479,8 +1587,12 @@ class TestProductionContract(Base):
     # questions that have a dedicated proving test in TestQueryLayer. This allowlist
     # is the guard: flipping any other question to CERTIFIED without a proving test
     # fails here (prevents silent over-certification).
-    _QUERY_CERTIFIED = {"AC-01", "FS-01", "EX-01", "EX-02", "NW-01", "TM-08",
-                        "FS-03", "FS-05", "AC-03", "NW-05"}
+    _QUERY_CERTIFIED = {
+        "AC-01", "AC-03", "AC-05", "EX-01", "EX-02", "EX-06", "EX-07", "EX-10",
+        "FS-01", "FS-02", "FS-03", "FS-05", "FS-06", "FS-07", "FS-08", "FS-09",
+        "IA-02", "IA-06", "NW-01", "NW-02", "NW-05", "PK-01", "PK-02", "PK-04",
+        "PK-06", "PK-07", "PV-03", "PV-04", "SP-03", "SP-09", "TM-08",
+    }
 
     def test_certified_set_is_exactly_the_proven_set(self):
         from openpath.contract import PRODUCTION_CONTRACT, CatalogStatus

@@ -253,8 +253,14 @@ class Engine:
             window=window,
         )
         f.gaps.extend(base.gaps)
-        subject = ctx.subject if spec.actor == ACTOR_SUBJECT else None
-        f.events = apply_query(ctx.events, spec, subject)
+        # For a subject query, filter the facet's OWN output events -- these already
+        # carry the facet's attribution/correlation (e.g. packages correlated to the
+        # user's audited package-manager exec; root actions attributed to the human).
+        # For host-wide (any) / unattributable pivots, filter the raw federated set.
+        if spec.actor == ACTOR_SUBJECT:
+            f.events = apply_query(base.events, spec, ctx.subject)
+        else:
+            f.events = apply_query(ctx.events, spec, None)
         f.summary = _query_summary(spec, f.events, f.subject_label, facet.question_family)
         _apply_confidence(f, ctx)
         return AnalysisResult(finding=f, subject=ctx.subject, ledger=ctx.ledger, context=ctx)

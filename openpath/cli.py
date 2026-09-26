@@ -86,6 +86,12 @@ def build_parser() -> argparse.ArgumentParser:
                    help="filter to sudo-invoked events")
     q.add_argument("--no-sudo", dest="q_no_sudo", action="store_true",
                    help="filter to non-sudo events")
+    q.add_argument("--result", choices=["success", "failed"],
+                   help="filter by outcome (e.g. denied/failed escalations or logins)")
+    q.add_argument("--target-user", dest="q_target_user",
+                   help="filter to actions switching TO this identity (sudo -u / su)")
+    q.add_argument("--tty", dest="q_tty",
+                   help="filter to a controlling terminal (substring)")
     q.add_argument("--source", dest="q_sources", action="append", default=[],
                    help="filter to a specific evidence source id (repeatable)")
     p.add_argument("--data-root", default="/",
@@ -134,6 +140,7 @@ def _query_flags_present(args) -> bool:
     return bool(args.q_object or args.q_paths or args.q_actions or args.q_contains
                 or args.direction or args.q_as_root or args.q_not_root
                 or args.q_via_sudo or args.q_no_sudo or args.q_sources
+                or args.result or args.q_target_user or args.q_tty
                 or args.actor != "subject")
 
 
@@ -152,6 +159,9 @@ def _build_query_spec(args, facet_name):
         direction=args.direction or "",
         as_root=as_root,
         via_sudo=via_sudo,
+        result=args.result or "",
+        target_user=args.q_target_user or "",
+        tty=args.q_tty or "",
     )
 
 
