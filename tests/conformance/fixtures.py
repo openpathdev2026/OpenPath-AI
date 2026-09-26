@@ -543,6 +543,23 @@ class HostBuilder:
             "held_s": held_s, "proto": proto}))
         return self
 
+    def file_diff(self, path, at, actor=None, added=0, removed=0,
+                  before=None, after=None, summary=None):
+        """A content before/after diff from a file-integrity monitor (FS-13)."""
+        import json as _json
+        self._persist_add("var/log/openpath/file-diffs.jsonl", _json.dumps({
+            "path": path, "ts": at.astimezone(timezone.utc).isoformat(),
+            "actor": actor, "lines_added": added, "lines_removed": removed,
+            "before": before, "after": after, "summary": summary}))
+        return self
+
+    def ip_reputation(self, ip, reputation, country=None, asn=None):
+        """An IP reputation / geo feed entry (IA-10)."""
+        import json as _json
+        self._persist_add("var/log/openpath/ip-reputation.jsonl", _json.dumps({
+            "ip": ip, "reputation": reputation, "country": country, "asn": asn}))
+        return self
+
     def conntrack(self, proto, osrc, odst, sport, dport, state="ESTABLISHED",
                   nbytes=None):
         """A tracked flow line (proc/net/nf_conntrack format). nbytes -> accounting."""

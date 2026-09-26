@@ -16,6 +16,7 @@ from openpath.facets.accounts import AccountsFacet, GroupsFacet
 from openpath.facets.authorization import AuthorizationFacet
 from openpath.facets.base import AnalysisContext, Facet
 from openpath.facets.file_access import FileAccessFacet
+from openpath.facets.file_integrity import FileIntegrityFacet
 from openpath.facets.files import FilesFacet
 from openpath.facets.firewall import FirewallFacet
 from openpath.facets.lifecycle import SystemLifecycleFacet
@@ -23,6 +24,7 @@ from openpath.facets.meta import CoreFacet, EvidenceFacet, GapsFacet
 from openpath.facets.netflow import NetflowFacet
 from openpath.facets.netlogs import NetLogsFacet
 from openpath.facets.network import NetworkFacet
+from openpath.facets.origin_reputation import OriginReputationFacet
 from openpath.facets.packages import PackagesFacet
 from openpath.facets.persistence import PersistenceFacet
 from openpath.facets.pkgpolicy import PackagePolicyFacet
@@ -77,8 +79,10 @@ FAMILIES: List[FamilySpec] = [
     FamilySpec(23, "host_changes", "Host changes", HostChangesFacet),
     FamilySpec(24, "attribution", "Attribution", AttributionFacet),
     FamilySpec(25, "concurrent", "Concurrent activity", ConcurrentFacet),
-    FamilySpec(26, "evidence", "Evidence", EvidenceFacet),
-    FamilySpec(27, "gaps", "Gaps", GapsFacet),
+    FamilySpec(26, "file_integrity", "File content", FileIntegrityFacet),
+    FamilySpec(27, "origin_reputation", "Origin reputation", OriginReputationFacet),
+    FamilySpec(28, "evidence", "Evidence", EvidenceFacet),
+    FamilySpec(29, "gaps", "Gaps", GapsFacet),
 ]
 
 _BY_NAME: Dict[str, FamilySpec] = {spec.name: spec for spec in FAMILIES}

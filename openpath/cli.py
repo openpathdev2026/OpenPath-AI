@@ -138,6 +138,8 @@ def _facet_event_types(facet_name):
         "process_tree": (E.EXEC,), "shell_history": (E.SHELL_HISTORY,),
         "firewall": (E.FIREWALL,), "file_access": (E.FILE_READ,),
         "netflow": (E.NETFLOW,), "netlogs": (E.NETLOG,),
+        "file_integrity": (E.FILE_DIFF,),
+        "origin_reputation": (E.SESSION, E.SSH_AUTH),
     }.get(facet_name, ())
 
 

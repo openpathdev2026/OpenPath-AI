@@ -38,6 +38,7 @@ class EventType(enum.Enum):
     # Filesystem
     FILE_CHANGE = "file_change"  # create/modify/delete/rename/attr
     FILE_READ = "file_read"      # read/open-for-read/access of a watched path (-p r)
+    FILE_DIFF = "file_diff"      # content before/after of a modified file (FIM bundle)
 
     # Identity administration
     ACCOUNT_CHANGE = "account_change"  # add/del user, passwd change
@@ -159,6 +160,8 @@ class Event:
             return ("file", a.get("path") or "?")
         if t is EventType.FILE_READ:
             return ("file-read", a.get("path") or "?")
+        if t is EventType.FILE_DIFF:
+            return ("file-content", a.get("path") or "?")
         if t is EventType.NETFLOW:
             return ("flow", a.get("artifact") or f"{a.get('peer')}:{a.get('dport')}")
         if t is EventType.NETLOG:

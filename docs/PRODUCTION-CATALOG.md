@@ -5,7 +5,7 @@ The full set of user-facing forensic questions OpenPath commits to, each with a
 count is an output of the analysis, not a target. Certification is a property of
 a question, not a limit on which questions exist.
 
-**153 questions** — CERTIFIED 151, CONTRACTED 2.
+**153 questions** — CERTIFIED 153, CONTRACTED 0.
 
 - **CERTIFIED** — wired and proven end-to-end today (see `catalog.py` + the
   conformance suite). Complete *within the covered evidence scope*, never absolute.
@@ -75,6 +75,7 @@ a question, not a limit on which questions exist.
 | FS-10 | When did {user}'s file changes occur relative to the incident (file-activity timeline)? | `timeline` | auditd(host-wide file-change rule), auditd(file watch/modify audit rule), wtmp |
 | FS-11 | Did file changes occur with no interactive session behind them (unattended, automated, cron/daemon-driven)? | `files` | auditd(host-wide file-change rule), auditd(file watch/modify audit rule), wtmp |
 | FS-12 | What sensitive files did {user} read or access, not modify (reading /etc/shadow, SSH keys, credential stores)? | `file_access` | auditd(file watch/modify audit rule) |
+| FS-13 | What exactly changed inside a modified file (content, before/after diff, which lines/keys)? | `file_integrity` | file-integrity / content-baseline collector, auditd(host-wide file-change rule) |
 | FS-14 | Did {user} modify files they do not own or that fall outside their normal scope (another user's data, system-owned files)? | `files` | filesystem ownership/state baseline collector, auditd(host-wide file-change rule) |
 | IA-01 | How did {user} authenticate (password, public key, or another method)? | `login` | journal.sshd, auth |
 | IA-02 | Did {user} fail to authenticate — how many failed attempts, and from where? | `login` | btmp, journal.sshd, auth |
@@ -85,6 +86,7 @@ a question, not a limit on which questions exist.
 | IA-07 | Which remote IPs/hosts connected and authenticated to this host? | `login` | wtmp, journal.sshd, auth, btmp |
 | IA-08 | Were there brute-force or password-spraying attempts against the host or {user}? | `login` | btmp, journal.sshd, auth, wtmp |
 | IA-09 | Did {user} log in at unusual or off-hours times? | `login` | wtmp, journal.sshd, auth |
+| IA-10 | Did a login originate from a new, geographically unexpected, or known-malicious IP? | `origin_reputation` | geo/threat-intel enrichment + historical login baseline store, journal.sshd, auth, wtmp |
 | IA-11 | Did authentication occur to a non-SSH service (VPN, display manager, cockpit, or other PAM service)? | `login` | general (non-sshd) journald collector, wtmp |
 | IA-12 | Is SSH root login or password authentication even permitted on this host (auth policy)? | `authorization` | sshd config collector, journal.sshd, auth |
 | NW-01 | What outbound network connections did {user} make, and to which destinations and ports? | `network` | auditd(connect audit rule) |
@@ -176,15 +178,3 @@ a question, not a limit on which questions exist.
 | TM-14 | Were there periods when {user} was demonstrably present but their activity is invisible to us? | `gaps` | wtmp, auth, auditd, journal.sshd |
 
 ## CONTRACTED (roadmap)
-
-### Needs: file-integrity / content-baseline collector (AIDE/tripwire DB, content-capturing FIM, backup/snapshot diffs, or git/etckeeper history of /etc)  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| FS-13 | What exactly changed inside a modified file (content, before/after diff, which lines/keys)? | NEW:file_integrity | auditd records syscall metadata (path/op/actor/time), never file bytes — no content, hashes, size deltas, or line-level diff anywhere in ... |
-
-### Needs: geo/threat-intel enrichment + historical login baseline store (and cloud/web/proxy ingestion for access that never hits a local login carrier)  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| IA-10 | Did a login originate from a new, geographically unexpected, or known-malicious IP? | NEW:origin_reputation | Raw origin IPs are CERTIFIED as origins; the new/geo/malicious classification is entirely unmodeled; 24h window gives no baseline. |

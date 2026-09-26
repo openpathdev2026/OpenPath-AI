@@ -207,6 +207,23 @@ _BY_FACET.setdefault(
         "file_access", ("auditd",), True, _FILEACCESS_SPEC),
 )
 
+_FILEINT_SPEC = _S(certified=[["file_integrity"]], fatal=["file_integrity"])
+_BY_FACET.setdefault(
+    "file_integrity",
+    CatalogQuestion(
+        "FS-13", "What exactly changed inside a modified file (content before/after)?",
+        "file_integrity", ("file_integrity",), True, _FILEINT_SPEC),
+)
+
+_ORIGINREP_SPEC = _S(certified=[["ip_reputation"]], fatal=["ip_reputation"])
+_BY_FACET.setdefault(
+    "origin_reputation",
+    CatalogQuestion(
+        "IA-10", "Did a login originate from a new, geographically unexpected, or "
+        "known-malicious IP?",
+        "origin_reputation", ("ip_reputation",), True, _ORIGINREP_SPEC),
+)
+
 _NETLOGS_SPEC = _S(certified=[["netlogs"]], fatal=["netlogs"])
 _BY_FACET.setdefault(
     "netlogs",

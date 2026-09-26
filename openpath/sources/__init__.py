@@ -12,7 +12,9 @@ from openpath.sources.auth import SyslogAuthCollector
 from openpath.sources.authz import AuthzCollector
 from openpath.sources.base import CollectResult, Collector
 from openpath.sources.conntrack import ConntrackCollector
+from openpath.sources.file_integrity import FileIntegrityCollector
 from openpath.sources.firewall import FirewallCollector
+from openpath.sources.ip_reputation import IpReputationCollector
 from openpath.sources.shell_history import ShellHistoryCollector
 from openpath.sources.btmp import BtmpCollector
 from openpath.sources.journal_sshd import SshdJournalCollector
@@ -40,6 +42,8 @@ def default_collectors() -> List[Collector]:
         FirewallCollector(),
         ConntrackCollector(),
         NetLogsCollector(),
+        FileIntegrityCollector(),
+        IpReputationCollector(),
     ]
 
 
@@ -60,5 +64,7 @@ __all__ = [
     "FirewallCollector",
     "ConntrackCollector",
     "NetLogsCollector",
+    "FileIntegrityCollector",
+    "IpReputationCollector",
     "default_collectors",
 ]

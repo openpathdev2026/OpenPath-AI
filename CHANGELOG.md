@@ -6,6 +6,17 @@ based on Keep a Changelog; dates are UTC.
 ## [Unreleased]
 
 ### Added
+- **File content diffs (FS-13) and login-origin reputation (IA-10) -- the full
+  contract is now CERTIFIED (153/153, CONTRACTED 0).** FS-13: a file-integrity
+  collector + facet read before/after content from a FIM / content-snapshot bundle
+  (auditd records the change act, never content), disclosed as scoped to that
+  evidence. IA-10: an IP-reputation collector reads a geo/threat-intel feed and the
+  origin-reputation facet flags login origins the feed rates malicious / suspicious
+  / new, reporting an origin absent from the feed as "unrated" rather than clearing
+  it. Both follow OpenPath's read-when-present model -- the answer is sound when the
+  evidence source is provided and an honest UNANSWERABLE with a named remedy when it
+  is not. Proven in `TestContentAndReputation`.
+
 - **Network telemetry logs (NW-08/10/12/15, 151 total).** A net-logs collector +
   host-level facet read the network logs a bundle may carry -- DNS queries (NW-08),
   firewall DROP/REJECT lines (NW-10), web/proxy accesses (NW-12), and socket

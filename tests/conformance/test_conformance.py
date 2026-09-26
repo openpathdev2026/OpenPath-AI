@@ -121,6 +121,11 @@ class Base(unittest.TestCase):
         h.fw_drop("198.51.100.9", "10.0.0.2", 4444, ago(hours=2))
         h.proxy_access("10.0.0.2", "http://example.com/x", ago(hours=2))
         h.socket_lifetime("93.184.216.34", 443, ago(hours=3), ago(hours=2), 3600)
+        # content-diff (FIM) + IP reputation feed for alice's login origin
+        h.file_diff("/etc/hosts", ago(hours=2, minutes=20), actor="alice",
+                    added=1, removed=0, before="127.0.0.1 localhost",
+                    after="127.0.0.1 localhost\\n10.0.0.9 evil")
+        h.ip_reputation("203.0.113.7", "expected", country="US")
         h.write()
         return root
 
@@ -906,7 +911,7 @@ class TestReadiness(Base):
         report = self._rd(self.fully_instrumented())
         # all substantive data questions answerable (aggregates not counted)
         self.assertEqual(report.answerable, report.data_total)
-        self.assertEqual(report.data_total, 20)
+        self.assertEqual(report.data_total, 22)
 
     def test_debian_host_blind_on_files_and_network_only(self):
         root = self.make_root()
@@ -2628,6 +2633,69 @@ class TestScopeSessionVisibility(Base):
                             for n in d["finding"]["notes"]))
 
 
+class TestContentAndReputation(Base):
+    """Certifies the two enrichment-evidence questions: FS-13 (file content
+    before/after from a file-integrity monitor) and IA-10 (login-origin reputation
+    from a geo/threat-intel feed) -- each read WHEN a bundle provides the evidence,
+    cited, and disclosed as scoped to that source."""
+
+    def test_fs13_content_diff(self):
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.file_diff("/etc/ssh/sshd_config", ago(hours=2), actor="alice",
+                    added=1, removed=1,
+                    before="PermitRootLogin no", after="PermitRootLogin yes")
+        h.write()
+        rc, out = self.cli("--data-root", str(root), "--format", "json",
+                           "--facet", "file_integrity", "--user", "alice")
+        self.assertEqual(rc, 0, out)
+        d = json.loads(out)
+        self.assertTrue(d["finding"]["events"])
+        self.assertTrue(all(e["records"] for e in d["evidence"]))
+        blob = json.dumps(d)
+        self.assertIn("PermitRootLogin yes", blob)     # the after-content
+        self.assertIn("/etc/ssh/sshd_config", blob)
+
+    def test_fs13_absent_without_fim(self):
+        root = self.make_root()
+        HostBuilder(root).passwd("root", 0).passwd("alice", 1001).enable_file_syscalls().write()
+        rc, out = self.cli("--data-root", str(root), "--format", "json",
+                           "--facet", "file_integrity", "--user", "alice")
+        d = json.loads(out)
+        self.assertEqual(d["finding"]["events"], [])
+        self.assertNotEqual(d["finding"]["confidence"], "certified")  # honestly unanswerable
+
+    def test_ia10_malicious_origin(self):
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.login("alice", ago(hours=3), line="pts/0", host="45.9.148.99", until=ago(hours=1))
+        h.ssh_accept("alice", "45.9.148.99", ago(hours=3), method="password")
+        h.ip_reputation("45.9.148.99", "malicious", country="RU")
+        h.write()
+        rc, out = self.cli("--data-root", str(root), "--format", "json",
+                           "--facet", "origin_reputation", "--user", "alice")
+        self.assertEqual(rc, 0, out)
+        d = json.loads(out)
+        self.assertEqual(d["finding"]["confidence"], "certified")
+        self.assertIn("FLAGGED", d["finding"]["summary"])
+        self.assertIn("45.9.148.99", d["finding"]["summary"])
+
+    def test_ia10_unrated_origin_scoped_not_cleared(self):
+        # an origin absent from the feed is "unrated", never silently cleared
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.login("alice", ago(hours=3), line="pts/0", host="8.8.4.4", until=ago(hours=1))
+        h.ip_reputation("203.0.113.7", "expected")   # feed present, but not this IP
+        h.write()
+        rc, out = self.cli("--data-root", str(root), "--format", "json",
+                           "--facet", "origin_reputation", "--user", "alice")
+        d = json.loads(out)
+        self.assertIn("unrated", d["finding"]["summary"])
+
+
 class TestNetLogs(Base):
     """Certifies NW-08 (DNS queries), NW-10 (firewall drops), NW-12 (web/proxy),
     and NW-15 (socket open/close lifetime) from network-telemetry logs."""
@@ -2870,7 +2938,7 @@ class TestProductionContract(Base):
     # questions that have a dedicated proving test in TestQueryLayer. This allowlist
     # is the guard: flipping any other question to CERTIFIED without a proving test
     # fails here (prevents silent over-certification).
-    _QUERY_CERTIFIED = {"AC-01", "AC-02", "AC-03", "AC-04", "AC-05", "AC-06", "AC-07", "AC-08", "AC-09", "AC-10", "AC-11", "AC-12", "AC-13", "EX-01", "EX-02", "EX-03", "EX-04", "EX-05", "EX-06", "EX-07", "EX-08", "EX-09", "EX-10", "EX-11", "EX-12", "FS-01", "FS-02", "FS-03", "FS-04", "FS-05", "FS-06", "FS-07", "FS-08", "FS-09", "FS-10", "FS-11", "FS-12", "FS-14", "IA-01", "IA-02", "IA-03", "IA-04", "IA-05", "IA-06", "IA-07", "IA-08", "IA-09", "IA-11", "IA-12", "NW-01", "NW-02", "NW-03", "NW-04", "NW-05", "NW-06", "NW-07", "NW-08", "NW-09", "NW-10", "NW-11", "NW-12", "NW-13", "NW-14", "NW-15", "PK-01", "PK-02", "PK-03", "PK-04", "PK-05", "PK-06", "PK-07", "PK-08", "PK-09", "PK-10", "PK-11", "PK-12", "PK-13", "PK-14", "PK-15", "PK-16", "PV-01", "PV-02", "PV-03", "PV-04", "PV-05", "PV-06", "PV-07", "PV-08", "PV-09", "PV-10", "PV-11", "PV-12", "SL-01", "SL-02", "SL-03", "SL-04", "SL-05", "SL-06", "SL-07", "SL-08", "SL-09", "SL-10", "SL-11", "SL-12", "SL-13", "SL-14", "SP-01", "SP-02", "SP-03", "SP-04", "SP-05", "SP-06", "SP-07", "SP-08", "SP-09", "SP-10", "SP-11", "SP-12", "SP-13", "SP-14", "SP-15", "SP-16", "TM-01", "TM-02", "TM-03", "TM-04", "TM-05", "TM-06", "TM-07", "TM-08", "TM-09", "TM-10", "TM-11", "TM-12", "TM-13", "TM-14"}
+    _QUERY_CERTIFIED = {"AC-01", "AC-02", "AC-03", "AC-04", "AC-05", "AC-06", "AC-07", "AC-08", "AC-09", "AC-10", "AC-11", "AC-12", "AC-13", "EX-01", "EX-02", "EX-03", "EX-04", "EX-05", "EX-06", "EX-07", "EX-08", "EX-09", "EX-10", "EX-11", "EX-12", "FS-01", "FS-02", "FS-03", "FS-04", "FS-05", "FS-06", "FS-07", "FS-08", "FS-09", "FS-10", "FS-11", "FS-12", "FS-13", "FS-14", "IA-01", "IA-02", "IA-03", "IA-04", "IA-05", "IA-06", "IA-07", "IA-08", "IA-09", "IA-10", "IA-11", "IA-12", "NW-01", "NW-02", "NW-03", "NW-04", "NW-05", "NW-06", "NW-07", "NW-08", "NW-09", "NW-10", "NW-11", "NW-12", "NW-13", "NW-14", "NW-15", "PK-01", "PK-02", "PK-03", "PK-04", "PK-05", "PK-06", "PK-07", "PK-08", "PK-09", "PK-10", "PK-11", "PK-12", "PK-13", "PK-14", "PK-15", "PK-16", "PV-01", "PV-02", "PV-03", "PV-04", "PV-05", "PV-06", "PV-07", "PV-08", "PV-09", "PV-10", "PV-11", "PV-12", "SL-01", "SL-02", "SL-03", "SL-04", "SL-05", "SL-06", "SL-07", "SL-08", "SL-09", "SL-10", "SL-11", "SL-12", "SL-13", "SL-14", "SP-01", "SP-02", "SP-03", "SP-04", "SP-05", "SP-06", "SP-07", "SP-08", "SP-09", "SP-10", "SP-11", "SP-12", "SP-13", "SP-14", "SP-15", "SP-16", "TM-01", "TM-02", "TM-03", "TM-04", "TM-05", "TM-06", "TM-07", "TM-08", "TM-09", "TM-10", "TM-11", "TM-12", "TM-13", "TM-14"}
 
     def test_certified_set_is_exactly_the_proven_set(self):
         from openpath.contract import PRODUCTION_CONTRACT, CatalogStatus
