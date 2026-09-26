@@ -5,7 +5,7 @@ The full set of user-facing forensic questions OpenPath commits to, each with a
 count is an output of the analysis, not a target. Certification is a property of
 a question, not a limit on which questions exist.
 
-**153 questions** — CERTIFIED 118, CONTRACTED 35.
+**153 questions** — CERTIFIED 123, CONTRACTED 30.
 
 - **CERTIFIED** — wired and proven end-to-end today (see `catalog.py` + the
   conformance suite). Complete *within the covered evidence scope*, never absolute.
@@ -71,6 +71,7 @@ a question, not a limit on which questions exist.
 | FS-08 | What files did {user} modify while acting as root (via sudo/su)? | `files` | auditd(host-wide file-change rule), auditd(file watch/modify audit rule), wtmp |
 | FS-09 | Who modified a specific file (e.g. who changed /etc/shadow or /etc/sudoers)? | `files` | auditd(host-wide file-change rule), auditd(file watch/modify audit rule), wtmp |
 | FS-10 | When did {user}'s file changes occur relative to the incident (file-activity timeline)? | `timeline` | auditd(host-wide file-change rule), auditd(file watch/modify audit rule), wtmp |
+| FS-11 | Did file changes occur with no interactive session behind them (unattended, automated, cron/daemon-driven)? | `files` | auditd(host-wide file-change rule), auditd(file watch/modify audit rule), wtmp |
 | IA-01 | How did {user} authenticate (password, public key, or another method)? | `login` | journal.sshd, auth |
 | IA-02 | Did {user} fail to authenticate — how many failed attempts, and from where? | `login` | btmp, journal.sshd, auth |
 | IA-03 | Did {user} access the host locally (console) or remotely (network)? | `sessions` | wtmp, journal.sshd |
@@ -78,10 +79,12 @@ a question, not a limit on which questions exist.
 | IA-05 | Did {user} have concurrent/overlapping sessions from different origins (account sharing/hijack)? | `sessions` | wtmp, journal.sshd |
 | IA-06 | Who accessed this host during the window (all authenticated principals)? | `login` | wtmp, journal.sshd, auth, btmp |
 | IA-07 | Which remote IPs/hosts connected and authenticated to this host? | `login` | wtmp, journal.sshd, auth, btmp |
+| IA-08 | Were there brute-force or password-spraying attempts against the host or {user}? | `login` | btmp, journal.sshd, auth, wtmp |
 | IA-12 | Is SSH root login or password authentication even permitted on this host (auth policy)? | `authorization` | sshd config collector, journal.sshd, auth |
 | NW-01 | What outbound network connections did {user} make, and to which destinations and ports? | `network` | auditd(connect audit rule) |
 | NW-02 | Did {user} connect to a specific known-bad IP, host, or port (IOC match)? | `network` | auditd(connect audit rule), auditd(bind audit rule) |
 | NW-05 | What ports or sockets did {user} bind or listen on — any new listeners or backdoors? | `network` | auditd(bind audit rule) |
+| NW-07 | What local (UNIX-domain) socket connections did {user} make — e.g. to docker.sock or D-Bus/systemd sockets? | `network` | auditd(connect audit rule) |
 | NW-13 | Can {user} be affirmatively cleared of network activity (an evidenced negative)? | `network` | auditd(connect audit rule), auditd(bind audit rule) |
 | PK-01 | What software changed on this host overall during the window, and when — regardless of who did it? | `packages` | packages |
 | PK-02 | When was a specific package (e.g. nginx) installed, upgraded, or removed on this host? | `packages` | packages |
@@ -107,6 +110,7 @@ a question, not a limit on which questions exist.
 | PV-11 | Did someone grant {user} sudo rights or modify the sudoers policy (privilege persistence)? | `authorization` | sudoers collector, auditd(host-wide file-change rule), auth |
 | SL-01 | When did this host last boot / come up? | `system_lifecycle` | wtmp, auditd |
 | SL-02 | How many times did the host reboot during the window, and how frequently? | `system_lifecycle` | wtmp |
+| SL-03 | Did a reboot terminate {user}'s active login session, and at what time? | `sessions` | wtmp |
 | SL-04 | When did the host shut down or power off, and was it a clean shutdown or a crash? | `system_lifecycle` | general (non-sshd) journald collector, wtmp |
 | SL-05 | Was there an unexpected or unplanned reboot / crash during the window? | `system_lifecycle` | general (non-sshd) journald / kmsg collector, wtmp, auditd, auth |
 | SL-06 | What were the host's uptime windows — how long was it up between reboots, and current uptime? | `system_lifecycle` | wtmp |
@@ -133,6 +137,7 @@ a question, not a limit on which questions exist.
 | SP-13 | Did {user} install user-level systemd units (~/.config/systemd/user) or enable lingering to persist without an active login? | `persistence` | systemd-unit collector, auditd(execve audit rule), auditd(host-wide file-change rule), auditd |
 | SP-14 | Did {user} establish ANY persistence mechanism during the window, across cron, at, systemd units/timers, and startup config? | `persistence` | cron collector, systemd-unit collector, auditd(execve audit rule), auditd(host-wide file-change rule), auditd, auth, wtmp |
 | SP-15 | Can we confirm {user} did NOT install or alter any persistence in the window (a clean-bill scoped negative)? | `persistence` | cron collector, systemd-unit collector, auditd(execve audit rule), auditd(host-wide file-change rule), auditd, auth |
+| SP-16 | What persistence-related actions did {user} take immediately before and after the incident? | `persistence` | auditd, auditd(execve audit rule), auditd(host-wide file-change rule), auth, wtmp |
 | TM-01 | Give me a full chronological timeline of everything {user} did in the window, in order. | `timeline` | auditd, wtmp, auth, packages, journal.sshd, btmp |
 | TM-04 | When did {user} first and last appear in the window, and how long were they active (dwell time)? | `timeline` | wtmp, auditd, auth, journal.sshd, packages, btmp |
 | TM-07 | Who is the human responsible for a specific action (a command, file change, connection, or account/group change), across sudo/su? | `root_activity` | auditd, auth, wtmp, journal.sshd |
@@ -144,16 +149,14 @@ a question, not a limit on which questions exist.
 
 ## CONTRACTED (roadmap)
 
-### Needs: query/filter/pivot layer shipped (openpath/query.py); per-question certification test pending  (11)
+### Needs: query/filter/pivot layer shipped (openpath/query.py); per-question certification test pending  (9)
 
 | ID | Question | Facet | Blind spots |
 |----|----------|-------|-------------|
 | FS-12 | What sensitive files did {user} read or access, not modify (reading /etc/shadow, SSH keys, credential stores)? | files | Reads captured ONLY when a read-perm watch (-w -p r) fires, and even then typed FILE_CHANGE op=openat (read vs write not distinguished); ... |
 | IA-09 | Did {user} log in at unusual or off-hours times? | login | Login instants are CERTIFIED but 'unusual/off-hours' requires a behavioral baseline the tool does not hold — the anomaly verdict is analy... |
 | NW-03 | Did {user} exhibit anomalous outbound behavior — beaconing, connection fan-out (scanning), or rare/high ports? | network | Reclassified from the generated CERTIFIED: raw connects are certified but the shipped facet does NOT score beaconing/fan-out/rare-port pa... |
-| NW-07 | What local (UNIX-domain) socket connections did {user} make — e.g. to docker.sock or D-Bus/systemd sockets? | network | Only the socket path is recorded, not the identity of the process listening on the other end; abstract (leading-null) names render awkwar... |
 | PV-09 | Did {user} gain root by means other than sudo/su — a setuid binary, an exploit, or an LPE? | root_activity | An as_root exec (auid≠uid) with NO backing escalation is a citable signal, but OpenPath cannot prove HOW euid reached 0 (setuid bit vs ca... |
-| SL-03 | Did a reboot terminate {user}'s active login session, and at what time? | sessions | Captures only reboots that interrupted an OPEN session; a reboot while {user} was logged out lives in the unsurfaced BOOT stream; wtmp-only. |
 | TM-02 | What did {user} do during a specific login session (the session on tty X that started at T)? | timeline | No pid→sid→session-leader lineage: concurrent same-user sessions cannot be separated; the session→action binding is by timestamp overlap ... |
 | TM-03 | What changed on the host between time T1 and T2 (across all users)? | core | Only subjects discoverable from passwd or the evidence are enumerated; config/state changes with no audited syscall (cron, sudoers, firew... |
 | TM-06 | Which of {user}'s recorded actions are attributable to them with high confidence, and how? | core | auid is the only true auid-centric key (survives sudo/su); auth/wtmp/journal.sshd attribute by name; packages by 30-min correlation — eac... |
@@ -202,18 +205,6 @@ a question, not a limit on which questions exist.
 |----|----------|-------|-------------|
 | NW-06 | What remote hosts established inbound connections to this system (source IPs of incoming flows)? | NEW:conntrack | accept/accept4 peer identity is not reliably decoded and accept is not a gated instrument; SSH inbound origins ARE recoverable via journa... |
 
-### Needs: cron + systemd-unit collectors to place STATE changes (not just acts) on the timeline  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| SP-16 | What persistence-related actions did {user} take immediately before and after the incident? | timeline | Only ACTS with a syscall/log footprint appear; state transitions (a unit becoming enabled, a timer's next fire) are not placeable without... |
-
-### Needs: cron/at & systemd-timer collector to positively ATTRIBUTE unattended writes to a specific job (today disclosed only as unattributable)  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| FS-11 | Did file changes occur with no interactive session behind them (unattended, automated, cron/daemon-driven)? | files | Can say 'no human loginuid behind this write' but cannot name WHICH job/timer/service; wtmp absent weakens the covering-session distinction. |
-
 ### Needs: cron/timer/unit collector (/var/spool/cron/*, /etc/crontab, /etc/cron.*, /etc/at.*, systemctl list-timers/list-unit-files, /etc/systemd/system/*, CRON lines in general journald) correlating schedule/exec against the audited action's time/pid  (1)
 
 | ID | Question | Facet | Blind spots |
@@ -231,12 +222,6 @@ a question, not a limit on which questions exist.
 | ID | Question | Facet | Blind spots |
 |----|----------|-------|-------------|
 | PV-12 | Was {user}'s account locked out, or did failed escalations trip a faillock/pam_tally threshold? | NEW:faillock | btmp/auditd/auth give failed ATTEMPTS and timing but never the lockout decision, threshold, or reset; cannot tell an operator-cleared loc... |
-
-### Needs: faillog/faillock collector (lockout/threshold correlation); optionally a longer-retention baseline store for slow campaigns  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| IA-08 | Were there brute-force or password-spraying attempts against the host or {user}? | login | Raw failures+successes are cited but the tool does NOT score velocity/threshold/spray or failure→success correlation; default window miss... |
 
 ### Needs: file-integrity / content-baseline collector (AIDE/tripwire DB, content-capturing FIM, backup/snapshot diffs, or git/etckeeper history of /etc)  (1)
 

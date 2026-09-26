@@ -69,10 +69,30 @@ class SessionsFacet(Facet):
             return f
 
         open_n = sum(1 for e in sessions if e.ts_end is None)
+        # SL-03: a reboot during a session ends it. A boot whose instant falls after
+        # a session's start and at/before its end (or now, if still open) terminated
+        # that session -- surfaced with both the session and the boot cited.
+        boots = sorted((e for e in ctx.events if e.type is EventType.BOOT),
+                       key=lambda e: e.ts)
+        reboot_terminated = 0
+        for s in sessions:
+            end = s.ts_end or ctx.window.end
+            for b in boots:
+                if s.ts < b.ts <= end:
+                    reboot_terminated += 1
+                    f.notes.append(
+                        f"[reboot-terminated] session on {s.attrs.get('line')} "
+                        f"(from {s.attrs.get('origin')}) started {s.ts.isoformat()} "
+                        f"was terminated by a reboot at {b.ts.isoformat()}")
+                    if b not in f.events:
+                        f.events.append(b)
+                    break
+        f.events.sort(key=lambda e: e.ts)
         f.summary = (
             f"{ctx.subject.username} had {len(sessions)} session(s) in "
             f"{ctx.window.label or 'the window'}"
             + (f", {open_n} still open" if open_n else "")
+            + (f", {reboot_terminated} ended by a reboot" if reboot_terminated else "")
             + "."
         )
         for e in sessions:
@@ -155,6 +175,22 @@ class LoginFacet(Facet):
         if failed:
             tail = (f"; {len(failed)} failed attempt(s)"
                     + (f" from {', '.join(fail_origins)}" if fail_origins else ""))
+        # IA-08: brute-force / password-spraying indicator. Deterministic threshold:
+        # >=5 failed attempts concentrated on a single source IP (brute-force) is
+        # flagged from the evidence itself, no external feed.
+        _BRUTE = 5
+        by_origin: dict = {}
+        for e in failed:
+            o = e.attrs.get("ip") or e.attrs.get("origin") or "?"
+            by_origin[o] = by_origin.get(o, 0) + 1
+        brute = {o: c for o, c in by_origin.items() if c >= _BRUTE}
+        if brute:
+            tail += ("; BRUTE-FORCE indicator: "
+                     + ", ".join(f"{c} failures from {o}"
+                                 for o, c in sorted(brute.items())))
+            for o, c in sorted(brute.items()):
+                f.notes.append(f"[brute-force] {c} failed attempts from {o} "
+                               f"(>= {_BRUTE} threshold)")
         f.summary = head + tail + "."
 
         for e in sessions:

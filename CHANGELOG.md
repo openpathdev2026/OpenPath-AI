@@ -6,6 +6,16 @@ based on Keep a Changelog; dates are UTC.
 ## [Unreleased]
 
 ### Added
+- **Five more existing-facet questions certified (123 total).** FS-11 (file
+  changes with no interactive session behind them, via the unattributable-actor
+  pivot); NW-07 (UNIX-domain socket connections such as `docker.sock`, via the
+  auditd AF_UNIX SOCKADDR decode + a `connect_unix` fixture); SL-03 (a reboot that
+  terminated a user's session -- the sessions facet now cites the interrupting
+  BOOT); IA-08 (brute-force / password-spraying -- a deterministic >=5-failures-
+  from-one-origin indicator computed from the evidence, no external feed); and
+  SP-16 (persistence acts pivoted around an incident, via `--around` on the
+  persistence facet). Each proven through the shipped CLI in
+  `TestRemainingProjections`.
 - **Projection/query certifications over existing facets (no new collector).**
   Twenty-one contract questions are deterministic filters/pivots/projections the
   wired facets already produce, now each proven end-to-end through the shipped CLI

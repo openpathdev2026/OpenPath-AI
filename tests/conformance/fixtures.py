@@ -60,6 +60,11 @@ def _saddr_inet(ip: str, port: int) -> str:
     return binascii.hexlify(b).decode()
 
 
+def _saddr_unix(path: str) -> str:
+    b = struct.pack("<H", socket.AF_UNIX) + path.encode() + b"\x00"
+    return binascii.hexlify(b).decode()
+
+
 def _saddr_inet6(ip: str, port: int) -> str:
     b = struct.pack("<H", socket.AF_INET6) + struct.pack(">H", port)
     b += b"\x00" * 4 + socket.inet_pton(socket.AF_INET6, ip) + b"\x00" * 4
@@ -220,6 +225,19 @@ class HostBuilder:
             f"success=yes exit=0 pid=3{sid} auid={auid} uid={uid} euid={euid} "
             f'comm="{comm}" exe="{exe}"')
         self._audit.append(f"type=SOCKADDR msg=audit({aid}): saddr={saddr}")
+        return self
+
+    def connect_unix(self, auid, uid, path, at, comm="docker", exe="/usr/bin/docker",
+                     euid=None):
+        """A connect(2) to an AF_UNIX socket (e.g. /var/run/docker.sock)."""
+        euid = uid if euid is None else euid
+        sid = next(self._serial)
+        aid = f"{_epoch_msec(at)}:{sid}"
+        self._audit.append(
+            f"type=SYSCALL msg=audit({aid}): arch=c000003e syscall={SYS['connect']} "
+            f"success=yes exit=0 pid=3{sid} auid={auid} uid={uid} euid={euid} "
+            f'comm="{comm}" exe="{exe}"')
+        self._audit.append(f"type=SOCKADDR msg=audit({aid}): saddr={_saddr_unix(path)}")
         return self
 
     def bind(self, auid, uid, ip, port, at, comm="nginx", exe="/usr/sbin/nginx"):
