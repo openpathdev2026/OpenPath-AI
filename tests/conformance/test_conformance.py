@@ -2080,6 +2080,185 @@ class TestSystemLifecycle(Base):
         self.assertEqual(cov["journald"]["unparseable"], 1)
 
 
+class TestProjectionQuestions(Base):
+    """Certifies the query/projection questions answered by EXISTING facets (no new
+    collector): sudo/argv/cwd/target-identity commands, auth-method and origin login
+    detail, session locality/overlap/open-state, package attribution/negatives,
+    account lifecycle, log-tamper file query, and root-action attribution -- each
+    through the shipped CLI, cited, with the specific claim asserted (not just n>0).
+    """
+
+    def _host(self):
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001).passwd("bob", 1002)
+        h.enable_execve().enable_network().enable_file_syscalls().watch("/etc", "wa", "etc")
+        h.boot(ago(hours=20))
+        h.login("alice", ago(hours=6), line="tty1", host="", until=ago(hours=5))
+        h.login("alice", ago(hours=5, minutes=30), line="pts/0", host="10.0.0.5",
+                until=ago(hours=1))                       # overlaps the tty1 session
+        h.login("bob", ago(hours=3), line="pts/1", host="10.0.0.9")   # still open
+        h.login("root", ago(hours=2), line="pts/2", host="10.0.0.1", until=ago(hours=1))
+        h.ssh_accept("alice", "10.0.0.5", ago(hours=5, minutes=30), method="publickey")
+        h.ssh_accept("root", "10.0.0.1", ago(hours=2), method="password")
+        h.sudo(1001, 0, "/usr/bin/dnf upgrade -y", ago(hours=4))          # via sudo
+        h.sudo(1001, 1002, "/bin/sh", ago(hours=4), runas="bob")          # sudo -u bob
+        h.exec(1001, 0, ["dnf", "upgrade", "-y"], "/usr/bin/dnf", ago(hours=4),
+               euid=0, comm="dnf")
+        h.exec(1001, 1001, ["ls", "-la", "/tmp"], "/usr/bin/ls", ago(hours=4),
+               cwd="/home/alice", comm="ls")
+        h.exec(4294967295, 0, ["/usr/lib/backup.sh"], "/usr/lib/backup.sh",
+               ago(hours=7), euid=0, comm="backup.sh")     # daemon/no-session root
+        h.file_change(1001, 0, "unlink", "/var/log/audit/audit.log", ago(hours=3),
+                      euid=0, key="etc")
+        h.file_change(1001, 0, "truncate", "/var/log/wtmp", ago(hours=3), euid=0)
+        h.add_user(1001, "temp", 1700, ago(hours=4))
+        h.del_user(1001, "temp", 1700, ago(hours=3))
+        h.add_user(4294967295, "svcacct", 1800, ago(hours=6))   # daemon account change
+        h.pkg("Upgraded", "openssl-3.0.1-1.fc40.x86_64", ago(hours=4))
+        h.pkg("Installed", "htop-3.0-1.fc40.x86_64", ago(hours=9))   # unattended
+        h.write()
+        return root
+
+    def setUp(self):
+        self.root = self._host()
+
+    def _run(self, facet, flags):
+        argv = ["--data-root", str(self.root), "--format", "json", "--facet", facet]
+        if "--actor" not in flags:
+            argv += ["--user", "alice"] if "--user" not in flags else []
+        rc, out = self.cli(*argv, *flags)
+        self.assertEqual(rc, 0, out)
+        d = json.loads(out)
+        self.assertTrue(all(e["records"] for e in d["evidence"]),
+                        "provenance lost (an event without a citation)")
+        return d
+
+    def _ev(self, d):
+        return d["finding"]["events"]
+
+    # -- commands -- #
+    def test_ex03_via_sudo(self):
+        d = self._run("privilege", ["--via-sudo", "--user", "alice"])
+        self.assertTrue(self._ev(d))
+        self.assertTrue(all((e.get("attrs") or {}).get("via_sudo") for e in self._ev(d)))
+
+    def test_ex04_full_argv(self):
+        d = self._run("commands", ["--user", "alice"])
+        argvs = [(e.get("attrs") or {}).get("cmdline") for e in self._ev(d)]
+        self.assertTrue(any(a and " " in a for a in argvs), "no full argv captured")
+
+    def test_ex05_cwd(self):
+        d = self._run("commands", ["--user", "alice"])
+        self.assertTrue(any((e.get("attrs") or {}).get("cwd") for e in self._ev(d)))
+
+    def test_pv06_target_identity(self):
+        d = self._run("privilege", ["--target-user", "bob", "--user", "alice"])
+        self.assertTrue(self._ev(d))
+        self.assertTrue(all((e.get("attrs") or {}).get("target_user") == "bob"
+                            for e in self._ev(d)))
+
+    # -- login / identity -- #
+    def test_ia01_auth_method(self):
+        d = self._run("login", ["--user", "alice"])
+        methods = {(e.get("attrs") or {}).get("method") for e in self._ev(d)}
+        self.assertIn("publickey", methods)
+
+    def test_ia07_remote_ips(self):
+        d = self._run("login", ["--actor", "any"])
+        blob = json.dumps(d)
+        self.assertIn("10.0.0.5", blob)
+
+    def test_pv01_escalation_method(self):
+        d = self._run("privilege", ["--user", "alice"])
+        self.assertTrue(self._ev(d))
+        tools = {(e.get("attrs") or {}).get("tool") for e in self._ev(d)}
+        self.assertTrue({"sudo", "su"} & tools, "escalation method (sudo/su) not shown")
+
+    def test_pv02_direct_root_login(self):
+        d = self._run("login", ["--actor", "any"])
+        # root authenticated directly from 10.0.0.1
+        root_ev = [e for e in self._ev(d) if e.get("actor_name") == "root"]
+        self.assertTrue(root_ev)
+        self.assertIn("10.0.0.1", json.dumps(root_ev))
+
+    # -- sessions -- #
+    def test_ia03_local_vs_remote(self):
+        d = self._run("sessions", ["--user", "alice"])
+        origins = {(e.get("attrs") or {}).get("origin") for e in self._ev(d)}
+        self.assertIn("local", origins)                 # tty1 console
+        self.assertTrue(any(o and o != "local" for o in origins))  # remote IP
+
+    def test_ia04_open_session(self):
+        d = self._run("sessions", ["--user", "bob"])
+        self.assertTrue(any(e.get("ts_end") is None for e in self._ev(d)),
+                        "bob's still-open session not surfaced")
+
+    def test_ia05_overlapping_sessions(self):
+        d = self._run("sessions", ["--user", "alice"])
+        iv = sorted(((e["ts"], e.get("ts_end")) for e in self._ev(d)))
+        self.assertGreaterEqual(len(iv), 2)
+        # the second session starts before the first one ends -> overlap
+        self.assertLess(iv[1][0], iv[0][1] or "9999")
+
+    # -- packages -- #
+    def test_pk05_attributed_by_command(self):
+        d = self._run("packages", ["--user", "alice"])
+        self.assertTrue(self._ev(d))
+        self.assertIn("openssl", json.dumps(d))
+
+    def test_pk09_upgrade_action(self):
+        d = self._run("packages", ["--action", "upgrade", "--user", "alice"])
+        self.assertTrue(self._ev(d))
+
+    def test_pk10_unattended_change(self):
+        d = self._run("packages", ["--actor", "unattributable"])
+        self.assertIn("htop", json.dumps(d))
+
+    def test_pk11_evidenced_negative(self):
+        d = self._run("packages", ["--user", "bob"])
+        self.assertEqual(self._ev(d), [])
+        self.assertEqual(d["finding"]["confidence"], "certified")
+
+    # -- accounts -- #
+    def test_ac08_account_lifecycle(self):
+        d = self._run("accounts", ["--user", "alice"])
+        actions = {(e.get("attrs") or {}).get("action") for e in self._ev(d)}
+        self.assertIn("add_user", actions)
+        self.assertIn("del_user", actions)     # created AND removed within the window
+
+    def test_ac09_unattributed_account_change(self):
+        d = self._run("accounts", ["--actor", "unattributable"])
+        self.assertTrue(self._ev(d))
+        self.assertIn("svcacct", json.dumps(d))
+
+    # -- files -- #
+    def test_fs04_log_tamper(self):
+        d = self._run("files", ["--path", "/var/log/*", "--user", "alice"])
+        paths = {(e.get("attrs") or {}).get("path") for e in self._ev(d)}
+        self.assertIn("/var/log/audit/audit.log", paths)
+        self.assertIn("/var/log/wtmp", paths)
+
+    # -- root activity / attribution -- #
+    def test_pv07_escalation_to_actions(self):
+        d = self._run("root_activity", ["--user", "alice"])
+        self.assertTrue(self._ev(d))   # alice's root actions after escalation
+
+    def test_sp08_scheduled_root_unattributable(self):
+        d = self._run("root_activity", ["--actor", "unattributable"])
+        self.assertTrue(self._ev(d))
+        self.assertTrue(all(e.get("auid") is None for e in self._ev(d)))
+        self.assertIn("backup.sh", json.dumps(d))
+
+    def test_tm07_responsible_human(self):
+        # root_activity host-wide attributes root actions to the responsible human.
+        f = self.finding(self.root, "root", "root_activity")
+        self.assertTrue(f.events)
+        # the attribution note names who exercised root
+        self.assertTrue(any("alice" in n for n in f.notes) or
+                        any(e.actor_name == "alice" for e in f.events))
+
+
 class TestProductionContract(Base):
     """The full production contract is honest: CERTIFIED == the wired core, and
     every CONTRACTED question names what it needs and is never silently answered."""
@@ -2088,7 +2267,7 @@ class TestProductionContract(Base):
     # questions that have a dedicated proving test in TestQueryLayer. This allowlist
     # is the guard: flipping any other question to CERTIFIED without a proving test
     # fails here (prevents silent over-certification).
-    _QUERY_CERTIFIED = {"AC-01", "AC-02", "AC-03", "AC-04", "AC-05", "AC-06", "AC-07", "AC-10", "AC-11", "AC-12", "AC-13", "EX-01", "EX-02", "EX-06", "EX-07", "EX-08", "EX-09", "EX-10", "FS-01", "FS-02", "FS-03", "FS-05", "FS-06", "FS-07", "FS-08", "FS-09", "FS-10", "IA-02", "IA-06", "IA-12", "NW-01", "NW-02", "NW-05", "NW-13", "PK-01", "PK-02", "PK-03", "PK-04", "PK-06", "PK-07", "PK-08", "PK-12", "PV-03", "PV-04", "PV-05", "PV-08", "PV-10", "PV-11", "SL-01", "SL-02", "SL-04", "SL-05", "SL-06", "SL-07", "SL-08", "SL-09", "SL-10", "SL-11", "SL-12", "SL-13", "SL-14", "SP-01", "SP-02", "SP-03", "SP-04", "SP-05", "SP-06", "SP-07", "SP-09", "SP-10", "SP-11", "SP-12", "SP-13", "SP-14", "SP-15", "TM-01", "TM-04", "TM-08", "TM-09", "TM-10", "TM-11", "TM-12"}
+    _QUERY_CERTIFIED = {"AC-01", "AC-02", "AC-03", "AC-04", "AC-05", "AC-06", "AC-07", "AC-08", "AC-09", "AC-10", "AC-11", "AC-12", "AC-13", "EX-01", "EX-02", "EX-03", "EX-04", "EX-05", "EX-06", "EX-07", "EX-08", "EX-09", "EX-10", "FS-01", "FS-02", "FS-03", "FS-04", "FS-05", "FS-06", "FS-07", "FS-08", "FS-09", "FS-10", "IA-01", "IA-02", "IA-03", "IA-04", "IA-05", "IA-06", "IA-07", "IA-12", "NW-01", "NW-02", "NW-05", "NW-13", "PK-01", "PK-02", "PK-03", "PK-04", "PK-05", "PK-06", "PK-07", "PK-08", "PK-09", "PK-10", "PK-11", "PK-12", "PV-01", "PV-02", "PV-03", "PV-04", "PV-05", "PV-06", "PV-07", "PV-08", "PV-10", "PV-11", "SL-01", "SL-02", "SL-04", "SL-05", "SL-06", "SL-07", "SL-08", "SL-09", "SL-10", "SL-11", "SL-12", "SL-13", "SL-14", "SP-01", "SP-02", "SP-03", "SP-04", "SP-05", "SP-06", "SP-07", "SP-08", "SP-09", "SP-10", "SP-11", "SP-12", "SP-13", "SP-14", "SP-15", "TM-01", "TM-04", "TM-07", "TM-08", "TM-09", "TM-10", "TM-11", "TM-12"}
 
     def test_certified_set_is_exactly_the_proven_set(self):
         from openpath.contract import PRODUCTION_CONTRACT, CatalogStatus

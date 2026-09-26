@@ -189,12 +189,14 @@ class HostBuilder:
         return self
 
     def sudo(self, auid, uid, cmd, at, cwd="/home", terminal="pts/0",
-             res="success"):
+             res="success", runas=None):
         sid = next(self._serial)
         aid = f"{_epoch_msec(at)}:{sid}"
+        # A runas target (sudo -u <user>) is recorded as acct= in the USER_CMD msg.
+        acct = f" acct=\"{runas}\"" if runas else ""
         self._audit.append(
             f"type=USER_CMD msg=audit({aid}): pid=3{sid} uid={uid} auid={auid} "
-            f"ses=3 msg='cwd=\"{cwd}\" cmd={_hex(cmd)} terminal={terminal} "
+            f"ses=3 msg='cwd=\"{cwd}\" cmd={_hex(cmd)}{acct} terminal={terminal} "
             f"res={res}' exe=\"/usr/bin/sudo\"")
         return self
 

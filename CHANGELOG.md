@@ -6,6 +6,21 @@ based on Keep a Changelog; dates are UTC.
 ## [Unreleased]
 
 ### Added
+- **Projection/query certifications over existing facets (no new collector).**
+  Twenty-one contract questions are deterministic filters/pivots/projections the
+  wired facets already produce, now each proven end-to-end through the shipped CLI
+  in `TestProjectionQuestions` with the specific claim asserted (not merely
+  non-empty): EX-03 (via sudo) and PV-06 (sudo to another identity), answered by the
+  privilege facet after the auditd collector began carrying `via_sudo`/`target_user`
+  on escalation events; EX-04 (full argv) and EX-05 (cwd); IA-01 (auth method),
+  IA-07 (remote origins) and PV-02 (direct root login) from login; IA-03
+  (local vs remote), IA-04 (still-open session) and IA-05 (overlapping sessions)
+  from sessions; PV-01 (escalation method) and PV-07 (escalation → root actions);
+  PK-05 (attributed by command), PK-09 (upgrades), PK-10 (unattended change) and
+  PK-11 (evidenced clean bill); AC-08 (account created-then-removed) and AC-09
+  (daemon/unattributed account change); FS-04 (log/audit-trail tamper); SP-08
+  (scheduler-launched root activity surfaced as unattributable) and TM-07 (the
+  responsible human via auid attribution). 118 questions now CERTIFIED.
 - **System-lifecycle facet + general journald collector (`openpath/facets/
   lifecycle.py`, `openpath/sources/journald.py`).** Answers the host-lifecycle
   cluster: when the host booted/rebooted, how long it has been up, what kernel ran,

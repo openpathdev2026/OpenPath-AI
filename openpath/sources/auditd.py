@@ -597,10 +597,17 @@ class AuditdCollector(Collector):
         cmd = fields.get("cmd")
         if cmd:
             cmd = _maybe_hex_decode(cmd)
+        # The identity switched TO: an explicit runas from the record, else the
+        # default (root). Carried so "did X escalate to whom?" / "run via sudo?"
+        # (PV-06 / EX-03) are answerable deterministically over these events.
+        target_user = (fields.get("acct") or fields.get("USER") or fields.get("user")
+                       or ("root" if tool in ("sudo", "su") else None))
         attrs = {
             "tool": tool, "res": res, "record_type": rtype,
             "cmd": cmd, "terminal": fields.get("terminal"),
             "cwd": fields.get("cwd"), "exe": exe or None,
+            "via_sudo": tool == "sudo",
+            "target_user": target_user,
         }
         verb = "ran command via sudo" if (tool == "sudo" and cmd) else f"{tool} session"
         summary = f"{verb}" + (f": {cmd}" if cmd else "") + (
