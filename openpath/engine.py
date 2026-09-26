@@ -36,7 +36,8 @@ from openpath.sources import Collector, default_collectors
 # Aggregate facets set their own (federated) confidence inside analyze(); this
 # fills in the data facets, whose confidence is their catalog EvidenceSpec assessed
 # against the ledger, finding-aware.
-_AGGREGATE_FACETS = {"core", "timeline", "evidence", "gaps"}
+_AGGREGATE_FACETS = {"core", "timeline", "evidence", "gaps",
+                     "host_changes", "attribution", "concurrent"}
 
 
 def _query_summary(spec, events, who_label: str, family: str) -> str:
@@ -74,7 +75,8 @@ class AnalysisResult:
 
 # The four families that aggregate the others rather than reading a source of
 # their own; they always "run", so they must not inflate the readiness count.
-_AGGREGATE_FAMILIES = {"core", "timeline", "evidence", "gaps"}
+_AGGREGATE_FAMILIES = {"core", "timeline", "evidence", "gaps",
+                       "host_changes", "attribution", "concurrent"}
 
 
 @dataclass

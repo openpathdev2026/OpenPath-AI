@@ -6,6 +6,15 @@ based on Keep a Changelog; dates are UTC.
 ## [Unreleased]
 
 ### Added
+- **Temporal / cross-user meta questions (TM-03/06/13, 147 total).** Three aggregate
+  facets: `host_changes` (TM-03) enumerates everything that changed on the host in
+  the window across ALL users (files, accounts, groups, packages, persistence,
+  authorization, firewall), each cited; `attribution` (TM-06) labels each of the
+  subject's actions with how confidently it is attributed to them (high = own login
+  uid / named actor, medium = correlation, low = uid only) from the auid-centric
+  model; `concurrent` (TM-13) shows what OTHER principals were doing within +/-1h of
+  the subject's actions (lateral-movement context). Proven in `TestTemporalMeta`.
+
 - **Conntrack / netflow (NW-04/06/14, 144 total).** A conntrack collector reads the
   netfilter connection-tracking table (/proc/net/nf_conntrack or a saved dump) into
   `EventType.NETFLOW`, and a host-level netflow facet answers NW-06 (remote hosts

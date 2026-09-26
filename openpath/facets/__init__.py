@@ -33,6 +33,11 @@ from openpath.facets.privilege import (
     RootActivityFacet,
 )
 from openpath.facets.sessions import LoginFacet, SessionsFacet
+from openpath.facets.temporal import (
+    AttributionFacet,
+    ConcurrentFacet,
+    HostChangesFacet,
+)
 from openpath.facets.timeline import TimelineFacet
 
 
@@ -67,8 +72,11 @@ FAMILIES: List[FamilySpec] = [
     FamilySpec(19, "firewall", "Firewall", FirewallFacet),
     FamilySpec(20, "file_access", "File access", FileAccessFacet),
     FamilySpec(21, "netflow", "Network flows", NetflowFacet),
-    FamilySpec(22, "evidence", "Evidence", EvidenceFacet),
-    FamilySpec(23, "gaps", "Gaps", GapsFacet),
+    FamilySpec(22, "host_changes", "Host changes", HostChangesFacet),
+    FamilySpec(23, "attribution", "Attribution", AttributionFacet),
+    FamilySpec(24, "concurrent", "Concurrent activity", ConcurrentFacet),
+    FamilySpec(25, "evidence", "Evidence", EvidenceFacet),
+    FamilySpec(26, "gaps", "Gaps", GapsFacet),
 ]
 
 _BY_NAME: Dict[str, FamilySpec] = {spec.name: spec for spec in FAMILIES}
