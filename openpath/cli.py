@@ -133,6 +133,7 @@ def _facet_event_types(facet_name):
         "commands": (E.EXEC,), "files": (E.FILE_CHANGE,),
         "accounts": (E.ACCOUNT_CHANGE,), "groups": (E.GROUP_CHANGE,),
         "packages": (E.PACKAGE_CHANGE,), "network": (E.NETWORK,),
+        "persistence": (E.PERSISTENCE,),
     }.get(facet_name, ())
 
 

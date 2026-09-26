@@ -32,6 +32,7 @@ not belong in the product.
 | `auth` (auth.log / secure) | Q02 Q03 Q05 Q06 Q07 Q09 Q10 (auditd-less hosts) |
 | `auditd` (audit.log + rules) | Q05 Q06 Q07 Q08 Q09 Q10 Q12 |
 | `packages` (dnf.rpm/dpkg) | Q11 |
+| `persistence` (cron/at, systemd units/timers, linger, legacy startup) | SP-01 SP-06 SP-07 SP-13 SP-14 SP-15 |
 
 Every collector is used by at least one certified question. There is no source
 in the codebase that no catalog question requires.
@@ -47,6 +48,7 @@ high-tier one carries. When audit and wtmp disagree, audit is authoritative.
 | 0 | Identity / attribution (WHO / HOW / WHEN) | `auditd`, `auth`, `journal.sshd` | who acted, how they authenticated; `auid` survives sudo/su |
 | 1 | Activity (WHAT ran / files touched) | `auditd` (EXECVE/PATH/CWD), `auth` (sudo-only) | commands, files, root actions |
 | 2 | System state changes (WHAT changed) | `packages`, `auditd` (ADD/DEL user/group), `auth` | software, accounts, groups |
+| 2 | Persistence state (WHAT is configured to auto-run) | `persistence` (cron/at, systemd units/timers, linger, rc.local), `auditd`/`auth` (establishment acts) | scheduled jobs, enabled units, boot persistence |
 | 3 | Network (WHERE from / to) | `auditd` (connect/bind + SOCKADDR), `auth`/`journal.sshd` (ssh origin) | egress/ingress, remote origin |
 | 4 | Session corroboration (SUPPORTING) | `wtmp`, `btmp` | confirms a login happened / from where; session-duration intervals; failed logins |
 

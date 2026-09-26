@@ -20,6 +20,7 @@ from __future__ import annotations
 import binascii
 import itertools
 import json
+import os
 import socket
 import struct
 from datetime import datetime, timezone
@@ -81,6 +82,8 @@ class HostBuilder:
         self._group: List[tuple] = []
         self._rules: List[str] = []
         self._authlog: List[str] = []
+        self._persist: dict = {}            # rel-path -> list[str] lines
+        self._persist_symlinks: List[tuple] = []  # (link rel, target)
         self._serial = itertools.count(1000)
         self.auditd_present = True
 
@@ -364,6 +367,65 @@ class HostBuilder:
             f"{action} {pkg} {vfrom} {vto}")
         return self
 
+    # -- persistence state (cron / systemd / linger / legacy startup) ------- #
+    # These write the genuine on-disk state files the PersistenceCollector reads.
+    def _persist_add(self, rel, line):
+        self._persist.setdefault(rel, []).append(line)
+        return self
+
+    def cron_system(self, sched, user, cmd):
+        """A line in /etc/crontab (system crontab: has a USER field)."""
+        return self._persist_add("etc/crontab", f"{sched} {user} {cmd}")
+
+    def cron_d(self, name, sched, user, cmd):
+        """A drop-in under /etc/cron.d (also has a USER field)."""
+        return self._persist_add(f"etc/cron.d/{name}", f"{sched} {user} {cmd}")
+
+    def cron_user(self, user, sched, cmd):
+        """A per-user crontab under /var/spool/cron (file name = user, no USER field)."""
+        return self._persist_add(f"var/spool/cron/{user}", f"{sched} {cmd}")
+
+    def cron_runparts(self, period, name, body="#!/bin/sh"):
+        return self._persist_add(f"etc/cron.{period}/{name}", body)
+
+    def at_job(self, name, body="#!/bin/sh\n/tmp/x"):
+        return self._persist_add(f"var/spool/at/{name}", body)
+
+    def systemd_unit(self, name, exec_start, enabled=False,
+                     wanted_by="multi-user.target"):
+        self._persist_add(f"etc/systemd/system/{name}",
+                          f"[Unit]\nDescription={name}\n\n[Service]\n"
+                          f"ExecStart={exec_start}")
+        if enabled:
+            self._persist_symlinks.append(
+                (f"etc/systemd/system/{wanted_by}.wants/{name}", f"../{name}"))
+        return self
+
+    def systemd_timer(self, name, on_calendar, enabled=False,
+                      wanted_by="timers.target"):
+        self._persist_add(f"etc/systemd/system/{name}",
+                          f"[Unit]\nDescription={name}\n\n[Timer]\n"
+                          f"OnCalendar={on_calendar}\nPersistent=true")
+        if enabled:
+            self._persist_symlinks.append(
+                (f"etc/systemd/system/{wanted_by}.wants/{name}", f"../{name}"))
+        return self
+
+    def systemd_user_unit(self, user, name, exec_start=None):
+        exec_start = exec_start or f"/home/{user}/.local/bin/agent"
+        return self._persist_add(
+            f"home/{user}/.config/systemd/user/{name}",
+            f"[Unit]\nDescription={name}\n\n[Service]\nExecStart={exec_start}")
+
+    def linger(self, user):
+        """loginctl enable-linger writes an (empty) marker file named for the user."""
+        self._persist.setdefault(f"var/lib/systemd/linger/{user}", [])
+        return self
+
+    def rc_local(self, *lines):
+        self._persist["etc/rc.local"] = ["#!/bin/sh"] + list(lines) + ["exit 0"]
+        return self
+
     def rotate_logs(self):
         """Move everything accumulated so far into rotated (.1) files.
 
@@ -423,4 +485,13 @@ class HostBuilder:
             (self.root / "etc/group").write_text(
                 "\n".join(f"{n}:x:{g}:{','.join(m)}"
                           for n, g, m in self._group) + "\n")
+        for rel, lines in self._persist.items():
+            p = self.root / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(("\n".join(lines) + "\n") if lines else "")
+        for linkrel, target in self._persist_symlinks:
+            p = self.root / linkrel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            if not p.exists():
+                os.symlink(target, p)
         return self.root

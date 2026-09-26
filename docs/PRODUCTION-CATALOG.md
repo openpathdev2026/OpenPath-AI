@@ -5,7 +5,7 @@ The full set of user-facing forensic questions OpenPath commits to, each with a
 count is an output of the analysis, not a target. Certification is a property of
 a question, not a limit on which questions exist.
 
-**153 questions** — CERTIFIED 71, CONTRACTED 82.
+**153 questions** — CERTIFIED 77, CONTRACTED 76.
 
 - **CERTIFIED** — wired and proven end-to-end today (see `catalog.py` + the
   conformance suite). Complete *within the covered evidence scope*, never absolute.
@@ -13,10 +13,11 @@ a question, not a limit on which questions exist.
   certification is not complete. Each names the collector or subsystem it needs.
   A CONTRACTED question is never answered from thin air.
 
-> The largest single unblock is a **query/filter/pivot subsystem** (~77 questions):
-> the router answers whole-facet questions today, not filtered/pivoted projections
-> ("which X", "who did Y", by path/name/time). That subsystem, plus the named
-> collectors below, is the roadmap from 15 certified to the full contract.
+> The deterministic **query/filter/pivot subsystem** (`openpath/query.py`) and the
+> **persistence-state collector** (cron/at, systemd units/timers, linger, legacy
+> startup) are now shipped and proven. The remaining CONTRACTED questions are
+> grouped below by the collector or subsystem each still needs; that list is the
+> roadmap to the full contract.
 
 ## CERTIFIED (answerable today)
 
@@ -78,14 +79,20 @@ a question, not a limit on which questions exist.
 | PV-04 | What exact commands did {user} run as root (full command lines)? | `commands` | auditd(execve audit rule), auth |
 | PV-05 | Did {user} obtain an interactive root shell (sudo -i, sudo su -, sudo bash)? | `root_activity` | auditd(execve audit rule), auth |
 | PV-08 | When did {user} first and last escalate, and how often (escalation timeline)? | `privilege` | auditd, auth, wtmp |
+| SP-01 | What cron and at scheduled jobs are currently configured on this host, and which are attributable to {user}? | `persistence` | cron/at collector, auditd(execve audit rule), auditd, auth |
 | SP-02 | Did {user} modify any cron configuration files (user crontab, /etc/crontab, /etc/cron.d, /etc/cron.* run-parts)? | `files` | auditd(host-wide file-change rule), auditd(file watch/modify audit rule), wtmp |
 | SP-03 | Did {user} run crontab or at commands to schedule tasks (crontab -e, crontab -, at, batch)? | `commands` | auditd(execve audit rule), auth, wtmp |
 | SP-04 | Did {user} enable or disable any services or timers to persist across reboot (systemctl enable/disable, chkconfig, update-rc.d)? | `commands` | auditd(execve audit rule), auth, wtmp |
 | SP-05 | Did {user} create, modify, or drop-in a systemd unit (.service/.socket/.timer/.path or a drop-in under /etc/systemd/system, /run/systemd/system, or ~/.config/systemd/user)? | `files` | auditd(host-wide file-change rule), auditd(file watch/modify audit rule), wtmp |
+| SP-06 | Did {user} create or change any systemd timer, and what schedule does it fire on? | `persistence` | systemd-unit collector, auditd(host-wide file-change rule), auditd(execve audit rule), auditd |
+| SP-07 | What services and timers are currently enabled to start at boot, and which did {user} configure? | `persistence` | systemd-unit collector, auditd(execve audit rule), auditd, auth |
 | SP-09 | Did {user} start, stop, or restart any service (systemctl start/stop/restart, or the service command)? | `commands` | auditd(execve audit rule), auth, wtmp |
 | SP-10 | Did {user} create transient units or scheduled one-off runs via systemd-run (--on-calendar / --scope)? | `commands` | auditd(execve audit rule), auth, wtmp |
 | SP-11 | Did {user} mask/unmask units or change the default boot target (systemctl mask/unmask, set-default, isolate)? | `commands` | auditd(execve audit rule), auth, wtmp |
 | SP-12 | Did {user} modify legacy startup files (/etc/rc.local, /etc/init.d, /etc/rc.d, upstart /etc/init) for boot persistence? | `files` | auditd(host-wide file-change rule), auditd(file watch/modify audit rule), wtmp |
+| SP-13 | Did {user} install user-level systemd units (~/.config/systemd/user) or enable lingering to persist without an active login? | `persistence` | systemd-unit collector, auditd(execve audit rule), auditd(host-wide file-change rule), auditd |
+| SP-14 | Did {user} establish ANY persistence mechanism during the window, across cron, at, systemd units/timers, and startup config? | `persistence` | cron collector, systemd-unit collector, auditd(execve audit rule), auditd(host-wide file-change rule), auditd, auth, wtmp |
+| SP-15 | Can we confirm {user} did NOT install or alter any persistence in the window (a clean-bill scoped negative)? | `persistence` | cron collector, systemd-unit collector, auditd(execve audit rule), auditd(host-wide file-change rule), auditd, auth |
 | TM-01 | Give me a full chronological timeline of everything {user} did in the window, in order. | `timeline` | auditd, wtmp, auth, packages, journal.sshd, btmp |
 | TM-04 | When did {user} first and last appear in the window, and how long were they active (dwell time)? | `timeline` | wtmp, auditd, auth, journal.sshd, packages, btmp |
 | TM-08 | What activity on this host cannot be attributed to any human (daemon/service, cron/boot-time, or unset loginuid)? | `core` | auditd, wtmp |
@@ -206,12 +213,6 @@ a question, not a limit on which questions exist.
 |----|----------|-------|-------------|
 | AC-12 | Did {user} install an SSH authorized_key (or otherwise grant key-based access) for any account? | NEW:ssh-authz | A write is detectable only as a generic FILE_CHANGE if an auditd watch covers the path; the key type/fingerprint, the account authorized,... |
 
-### Needs: both a cron collector and a systemd-unit collector; a dedicated persistence facet federating their state with the auditd/auth act-level proxies  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| SP-14 | Did {user} establish ANY persistence mechanism during the window, across cron, at, systemd units/timers, and startup config? | NEW:persistence | Aggregates every per-surface blind spot: no current-state enumeration, no payload/definition content, no symlink/generator/preset visibil... |
-
 ### Needs: connection-close events (auditd socket close/shutdown syscall collection, or wiring up the parsed-but-unused sshd Disconnect/Connection-closed parsing)  (1)
 
 | ID | Question | Facet | Blind spots |
@@ -230,12 +231,6 @@ a question, not a limit on which questions exist.
 |----|----------|-------|-------------|
 | SP-08 | What commands were executed by scheduled tasks (cron/at/systemd timers) as root during the window, and can any be tied to {user}? | root_activity | auditd captures the commands but scheduler-spawned processes have unset loginuid → disclosed as root_no_session/daemon (unattributable); ... |
 
-### Needs: cron + systemd-unit collectors (a full state inventory) plus in-horizon act auditing  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| SP-15 | Can we confirm {user} did NOT install or alter any persistence in the window (a clean-bill scoped negative)? | NEW:persistence | Without state collectors a true clean bill is impossible — the strongest honest statement is a scope-bounded 'no observed act', which nev... |
-
 ### Needs: cron + systemd-unit collectors to place STATE changes (not just acts) on the timeline  (1)
 
 | ID | Question | Facet | Blind spots |
@@ -247,12 +242,6 @@ a question, not a limit on which questions exist.
 | ID | Question | Facet | Blind spots |
 |----|----------|-------|-------------|
 | FS-11 | Did file changes occur with no interactive session behind them (unattended, automated, cron/daemon-driven)? | files | Can say 'no human loginuid behind this write' but cannot name WHICH job/timer/service; wtmp absent weakens the covering-session distinction. |
-
-### Needs: cron/at collector (/var/spool/cron/*, /etc/crontab, /etc/cron.{d,daily,hourly,weekly,monthly}/*, /etc/anacrontab, /var/spool/at/*, atq, at/cron.{allow,deny})  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| SP-01 | What cron and at scheduled jobs are currently configured on this host, and which are attributable to {user}? | NEW:scheduled_tasks | The auditd proxy shows a cron file was edited or crontab/at was run but not the resulting job/payload; system cron.d/anacron entries name... |
 
 ### Needs: cron/at/systemd-timer & unit-state collector to reconstruct WHICH scheduler/service caused an unattributed change  (1)
 
@@ -433,24 +422,6 @@ a question, not a limit on which questions exist.
 | ID | Question | Facet | Blind spots |
 |----|----------|-------|-------------|
 | SL-07 | Was the host offline or down during any part of the window (a blind interval where nothing could be recorded)? | NEW:system_lifecycle | Only the pre-first-boot interval is accounted (and only internally, to adjust gap math); between-reboot downtime is invisible; the adjust... |
-
-### Needs: systemd-unit collector (systemctl list-timers; *.timer [Timer] OnCalendar/OnBootSec/Persistent; paired *.service ExecStart)  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| SP-06 | Did {user} create or change any systemd timer, and what schedule does it fire on? | NEW:systemd_units | OnCalendar cadence and the triggered service are unmodeled today; a FILE_CHANGE on a *.timer never yields the schedule; a timer shipped i... |
-
-### Needs: systemd-unit collector (systemctl list-unit-files --state=enabled, is-enabled, get-default; .wants/ symlink graph; SysV/chkconfig)  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| SP-07 | What services and timers are currently enabled to start at boot, and which did {user} configure? | NEW:systemd_units | Current state vs change-history differ; the proxy gives only change history within the audit horizon; symlink-based enablement, presets, ... |
-
-### Needs: systemd-unit collector (~/.config/systemd/user/*, /etc/systemd/user/*, loginctl show-user Linger / /var/lib/systemd/linger/*)  (1)
-
-| ID | Question | Facet | Blind spots |
-|----|----------|-------|-------------|
-| SP-13 | Did {user} install user-level systemd units (~/.config/systemd/user) or enable lingering to persist without an active login? | NEW:systemd_units | Home-directory unit dirs are typically unwatched by auditd so the file proxy usually sees nothing; linger and per-user enabled state unmo... |
 
 ### Needs: web/proxy/cloud audit-log collector (nginx/apache access logs, forward-proxy logs, cloud provider audit trail)  (1)
 

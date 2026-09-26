@@ -21,6 +21,7 @@ from openpath.facets.base import AnalysisContext, Facet
 from openpath.facets.files import FilesFacet
 from openpath.facets.network import NetworkFacet
 from openpath.facets.packages import PackagesFacet
+from openpath.facets.persistence import PersistenceFacet
 from openpath.facets.privilege import (
     CommandsFacet,
     PrivilegeFacet,
@@ -36,9 +37,10 @@ from openpath.model.finding import Finding
 # always-open gaps so the "Gaps" answer names its own unknown-unknowns instead of
 # implying the modeled six sources are the whole picture.
 _UNMODELED_SOURCE_GAPS = (
-    "no collector for scheduled-task / service state (cron, systemd timers/units, "
-    "service enable/disable); root activity from a scheduler is disclosed as "
-    "unattributable rather than reconstructed.",
+    "scheduled-task / service STATE (cron, systemd units/timers, linger, legacy "
+    "startup) is inventoried by the persistence collector, but runtime activity "
+    "LAUNCHED by a scheduler has an unset login uid and is disclosed as "
+    "unattributable (root_no_session/daemon), never tied to the job that spawned it.",
     "no collector for network origin/destination beyond audited connect/bind "
     "syscalls (firewall, VPN, cloud, web/proxy logs).",
     "no general journald collector (only the sshd slice); non-sshd service logs "
@@ -58,6 +60,7 @@ def _base_facets() -> List[Facet]:
         GroupsFacet(),
         PackagesFacet(),
         NetworkFacet(),
+        PersistenceFacet(),
     ]
 
 

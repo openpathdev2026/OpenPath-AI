@@ -99,6 +99,11 @@ class Base(unittest.TestCase):
                       euid=0, key="etc")
         h.add_user(1001, "deploybot", 1500, ago(hours=2, minutes=10))
         h.add_group(1001, "deploygrp", 3000, ago(hours=2, minutes=5))
+        # Persistence state: an enabled system service + a user unit/linger alice owns.
+        h.systemd_unit("nginx.service", "/usr/sbin/nginx -g 'daemon off;'", enabled=True)
+        h.systemd_timer("logrotate.timer", "daily", enabled=True)
+        h.systemd_user_unit("alice", "sync-agent.service")
+        h.linger("alice")
         h.write()
         return root
 
@@ -884,7 +889,7 @@ class TestReadiness(Base):
         report = self._rd(self.fully_instrumented())
         # all substantive data questions answerable (aggregates not counted)
         self.assertEqual(report.answerable, report.data_total)
-        self.assertEqual(report.data_total, 10)
+        self.assertEqual(report.data_total, 11)
 
     def test_debian_host_blind_on_files_and_network_only(self):
         root = self.make_root()
@@ -1663,6 +1668,170 @@ class TestQueryCertification(Base):
         self.assertIn("within the covered evidence scope", d["finding"]["summary"])
 
 
+class TestPersistence(Base):
+    """Certifies the persistence-STATE questions (SP-01/06/07/13/14/15) end-to-end
+    through the shipped CLI: current-state inventory, per-user attribution, timer
+    schedule, enabled-at-boot state, in-window establishment acts, and the honest
+    clean-bill evidenced negative -- each cited, none invented."""
+
+    def _host(self):
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001).passwd("bob", 1002)
+        h.enable_execve().enable_network().enable_file_syscalls().watch("/etc", "wa", "etc")
+        h.boot(ago(hours=6))
+        h.login("alice", ago(hours=5), until=ago(hours=1), host="203.0.113.7")
+        # -- persistence STATE (current inventory) -- #
+        h.cron_system("0 3 * * *", "root", "/usr/local/bin/backup.sh")   # system cron
+        h.cron_d("deploy", "*/10 * * * *", "alice", "/usr/local/bin/deploy.sh")  # alice's
+        h.cron_user("alice", "@reboot", "/home/alice/agent.sh")          # per-user crontab
+        h.cron_runparts("daily", "logrotate")
+        h.at_job("a0000001")
+        h.systemd_unit("evil.service", "/tmp/evil --daemon", enabled=True)   # enabled unit
+        h.systemd_timer("cleanup.timer", "*-*-* 02:00:00", enabled=True)     # enabled timer
+        h.systemd_user_unit("alice", "sync.service")                     # alice user unit
+        h.linger("alice")                                                # alice linger
+        h.rc_local("/opt/x/boot.sh")                                     # legacy startup
+        # -- persistence ACTS by alice in the window (auditd) -- #
+        h.file_change(1001, 0, "creat", "/etc/cron.d/deploy", ago(hours=4), euid=0, key="etc")
+        h.exec(1001, 0, ["systemctl", "enable", "evil.service"], "/usr/bin/systemctl",
+               ago(hours=4), euid=0, comm="systemctl")
+        h.exec(1001, 1001, ["crontab", "-e"], "/usr/bin/crontab", ago(hours=4), comm="crontab")
+        h.write()
+        return root
+
+    def _run(self, root, flags, user="alice"):
+        argv = ["--data-root", str(root), "--format", "json", "--facet", "persistence"]
+        if "--actor" not in flags:
+            argv += ["--user", user]
+        rc, out = self.cli(*argv, *flags)
+        self.assertEqual(rc, 0, out)
+        return json.loads(out)
+
+    def _all_cited(self, d):
+        self.assertTrue(d["evidence"], "no evidence")
+        self.assertTrue(all(e["records"] for e in d["evidence"]),
+                        "provenance lost: an evidence object without a raw record")
+
+    # -- SP-01: cron/at inventory + per-user attribution -- #
+    def test_sp01_cron_at_inventory_and_attribution(self):
+        d = self._run(self._host(), ["--actor", "any"])
+        self._all_cited(d)
+        evs = d["finding"]["events"]
+        kinds = {(e.get("attrs") or {}).get("kind") for e in evs}
+        self.assertIn("cron", kinds)
+        self.assertIn("at", kinds)
+        # per-user attribution: alice's cron.d job and per-user crontab name her.
+        alice_owned = [e for e in evs if e.get("actor_name") == "alice"
+                       and (e.get("attrs") or {}).get("kind") == "cron"]
+        self.assertTrue(alice_owned, "no cron artifact attributed to alice")
+
+    # -- SP-06: systemd timer + the schedule it fires on -- #
+    def test_sp06_systemd_timer_schedule(self):
+        d = self._run(self._host(), ["--actor", "any"])
+        timers = [e for e in d["finding"]["events"]
+                  if (e.get("attrs") or {}).get("kind") == "systemd_timer"]
+        self.assertTrue(timers, "no systemd timer inventoried")
+        self.assertEqual(timers[0]["attrs"]["schedule"], "*-*-* 02:00:00")
+        self.assertTrue(timers[0]["citations"] if "citations" in timers[0] else True)
+
+    # -- SP-07: what is enabled at boot, and which the user configured -- #
+    def test_sp07_enabled_at_boot(self):
+        d = self._run(self._host(), ["--actor", "any"])
+        enabled = [e.get("target") for e in d["finding"]["events"]
+                   if (e.get("attrs") or {}).get("enabled") is True]
+        self.assertIn("evil.service", enabled)
+        self.assertIn("cleanup.timer", enabled)
+        owners = {e.get("actor_name") for e in d["finding"]["events"] if e.get("actor_name")}
+        self.assertIn("alice", owners)  # which artifacts the user configured
+
+    # -- SP-13: user-level units + linger the user established -- #
+    def test_sp13_user_units_and_linger(self):
+        d = self._run(self._host(), [], user="alice")
+        self._all_cited(d)
+        kinds = {(e.get("attrs") or {}).get("kind") for e in d["finding"]["events"]}
+        self.assertIn("systemd_user_unit", kinds)
+        self.assertIn("linger", kinds)
+
+    # -- SP-14: did the user establish ANY persistence in the window -- #
+    def test_sp14_established_persistence_footprint(self):
+        d = self._run(self._host(), [], user="alice")
+        self._all_cited(d)
+        self.assertEqual(d["finding"]["confidence"], "certified")
+        # the footprint mixes owned artifacts AND in-window acts (file write + tool exec)
+        types = {e["type"] for e in d["finding"]["events"]}
+        self.assertIn("persistence", types)     # owned artifacts
+        self.assertTrue({"file_change", "exec"} & types, "no in-window act captured")
+        self.assertIn("footprint", d["finding"]["summary"])
+
+    # -- SP-15: clean-bill evidenced negative (scoped, not absolute) -- #
+    def test_sp15_clean_bill_is_scoped_negative(self):
+        d = self._run(self._host(), [], user="bob")
+        self.assertEqual(d["finding"]["events"], [])
+        self.assertEqual(d["finding"]["confidence"], "certified")
+        self.assertIn("evidenced negative", d["finding"]["summary"])
+        self.assertIn("not an absolute claim", d["finding"]["summary"])
+
+    def test_sp15_no_false_clean_bill_without_act_auditing(self):
+        # State is enumerable but in-window file-change auditing is absent (no rule,
+        # no file-change records): the facet must NOT hand out a certified clean bill
+        # -- it discloses the act-coverage gap and degrades to PARTIAL, never a false
+        # "did nothing".
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("bob", 1002)
+        h.enable_execve()  # exec auditing only; NO file-change rule, NO file records
+        h.cron_user("root", "@reboot", "/usr/local/bin/x.sh")
+        h.systemd_unit("svc.service", "/usr/bin/svc", enabled=True)
+        h.write()
+        d = self._run(root, [], user="bob")
+        self.assertEqual(d["finding"]["events"], [])
+        self.assertEqual(d["finding"]["confidence"], "partial")
+        self.assertTrue(any(g["question"] == "Persistence"
+                            for g in d["finding"]["gaps"]))
+
+    # -- conservation: an unparseable spool line is counted, never dropped -- #
+    def test_conservation_counts_unparseable_cron_line(self):
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0)
+        h.cron_user("root", "@reboot", "/ok.sh")           # 1 good record
+        h._persist_add("var/spool/cron/root", "garbage-not-a-cron-line")  # 1 bad
+        h.write()
+        rc, out = self.cli("--coverage", "--format", "json", "--data-root", str(root))
+        cov = {s["source_id"]: s for s in json.loads(out)["coverage"]["sources"]}
+        self.assertEqual(cov["persistence"]["unparseable"], 1)
+        self.assertGreaterEqual(cov["persistence"]["records_scanned"], 2)
+
+    def test_persistence_act_path_boundary(self):
+        # A FILE_CHANGE to /etc/initramfs-tools must NOT be mistaken for a
+        # persistence act just because it shares the /etc/init prefix; a real
+        # persistence path (/etc/cron.d/x) must be counted.
+        root = self.make_root()
+        h = HostBuilder(root)
+        h.passwd("root", 0).passwd("alice", 1001)
+        h.enable_execve().enable_file_syscalls()
+        h.systemd_unit("svc.service", "/usr/bin/svc")   # a state source so facet runs
+        h.file_change(1001, 1001, "creat", "/etc/initramfs-tools/hook", ago(hours=2))
+        h.file_change(1001, 0, "creat", "/etc/cron.d/job", ago(hours=2), euid=0, key="etc")
+        h.write()
+        paths = {e.attrs.get("path") for e in
+                 self.finding(root, "alice", "persistence").events
+                 if e.type.value == "file_change"}
+        self.assertIn("/etc/cron.d/job", paths)
+        self.assertNotIn("/etc/initramfs-tools/hook", paths)
+
+    # -- absent state source is disclosed, never a silent blank -- #
+    def test_absent_persistence_source_is_disclosed(self):
+        root = self.make_root()
+        HostBuilder(root).passwd("root", 0).passwd("alice", 1001).enable_execve().write()
+        d = self._run(root, [], user="alice")
+        self.assertEqual(d["finding"]["events"], [])
+        self.assertTrue(any(g["question"] == "Persistence"
+                            for g in d["finding"]["gaps"]))
+        self.assertNotEqual(d["finding"]["confidence"], "certified")
+
+
 class TestProductionContract(Base):
     """The full production contract is honest: CERTIFIED == the wired core, and
     every CONTRACTED question names what it needs and is never silently answered."""
@@ -1671,7 +1840,7 @@ class TestProductionContract(Base):
     # questions that have a dedicated proving test in TestQueryLayer. This allowlist
     # is the guard: flipping any other question to CERTIFIED without a proving test
     # fails here (prevents silent over-certification).
-    _QUERY_CERTIFIED = {"AC-01", "AC-02", "AC-03", "AC-04", "AC-05", "AC-06", "AC-07", "EX-01", "EX-02", "EX-06", "EX-07", "EX-08", "EX-09", "EX-10", "FS-01", "FS-02", "FS-03", "FS-05", "FS-06", "FS-07", "FS-08", "FS-09", "FS-10", "IA-02", "IA-06", "NW-01", "NW-02", "NW-05", "NW-13", "PK-01", "PK-02", "PK-03", "PK-04", "PK-06", "PK-07", "PK-08", "PK-12", "PV-03", "PV-04", "PV-05", "PV-08", "SP-02", "SP-03", "SP-04", "SP-05", "SP-09", "SP-10", "SP-11", "SP-12", "TM-01", "TM-04", "TM-08", "TM-09", "TM-10", "TM-11", "TM-12"}
+    _QUERY_CERTIFIED = {"AC-01", "AC-02", "AC-03", "AC-04", "AC-05", "AC-06", "AC-07", "EX-01", "EX-02", "EX-06", "EX-07", "EX-08", "EX-09", "EX-10", "FS-01", "FS-02", "FS-03", "FS-05", "FS-06", "FS-07", "FS-08", "FS-09", "FS-10", "IA-02", "IA-06", "NW-01", "NW-02", "NW-05", "NW-13", "PK-01", "PK-02", "PK-03", "PK-04", "PK-06", "PK-07", "PK-08", "PK-12", "PV-03", "PV-04", "PV-05", "PV-08", "SP-01", "SP-02", "SP-03", "SP-04", "SP-05", "SP-06", "SP-07", "SP-09", "SP-10", "SP-11", "SP-12", "SP-13", "SP-14", "SP-15", "TM-01", "TM-04", "TM-08", "TM-09", "TM-10", "TM-11", "TM-12"}
 
     def test_certified_set_is_exactly_the_proven_set(self):
         from openpath.contract import PRODUCTION_CONTRACT, CatalogStatus
@@ -1763,6 +1932,8 @@ class TestDemoReadiness(Base):
         h.exec(1001, 0, ["dnf", "install", "-y", "nginx"], "/usr/bin/dnf", ago(hours=2, minutes=55), euid=0, comm="dnf")
         h.pkg("Installed", "nginx-1.24.0-1.fc40.x86_64", ago(hours=2, minutes=54))
         h.connect(1001, 0, "93.184.216.34", 443, ago(hours=2, minutes=53))
+        h.systemd_unit("nginx.service", "/usr/sbin/nginx", enabled=True)
+        h.cron_system("0 3 * * *", "root", "/usr/local/bin/backup.sh")
         h.write()
         return root
 

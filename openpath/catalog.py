@@ -23,9 +23,10 @@ from openpath.model.evidence_matrix import EvidenceSpec
 
 _S = EvidenceSpec.make
 
-# The ten data facets a federated overview draws on.
+# The data facets a federated overview draws on.
 _DATA_FACETS = ("sessions", "login", "privilege", "root_activity", "commands",
-                "files", "accounts", "groups", "packages", "network")
+                "files", "accounts", "groups", "packages", "network",
+                "persistence")
 
 
 @dataclass(frozen=True)
@@ -120,6 +121,27 @@ CATALOG: List[CatalogQuestion] = [
 _BY_FACET = {}
 for _q in CATALOG:
     _BY_FACET.setdefault(_q.facet, _q)  # login -> Q02 (Q02/Q03 share the login spec)
+
+# The persistence facet (family 15) federates into Core but is not one of the
+# original wired 15 Q-questions; it answers the SP-* contract questions. Its
+# evidence contract: the persistence STATE source (cron/systemd/linger/startup)
+# alone makes the inventory answerable (single-member certified group ->
+# answerability == the facet's Requirement), with auditd/auth corroborating the
+# in-window establishment ACTS. Registered here so spec_for_facet/confidence and
+# the spec<->requirement consistency check see it, without changing the CATALOG id
+# set (which the production-contract certification guard is keyed to).
+_PERSISTENCE_SPEC = _S(certified=[["persistence"]],
+                       supporting=["auditd", "auth"],
+                       fatal=["persistence"])
+_BY_FACET.setdefault(
+    "persistence",
+    CatalogQuestion(
+        "SP-14",
+        "Did {user} establish ANY persistence mechanism (cron, at, systemd "
+        "units/timers, startup config) during the window?",
+        "persistence", ("persistence", "auditd", "auth"), True,
+        _PERSISTENCE_SPEC),
+)
 
 
 def by_id(qid: str) -> CatalogQuestion:

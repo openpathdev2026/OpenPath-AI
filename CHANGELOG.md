@@ -6,6 +6,27 @@ based on Keep a Changelog; dates are UTC.
 ## [Unreleased]
 
 ### Added
+- **Persistence-state collector + facet (`openpath/sources/persistence.py`,
+  `openpath/facets/persistence.py`).** The first current-STATE evidence source
+  (everything prior was time-stamped acts). It inventories what is configured to
+  auto-run: cron (`/etc/crontab`, `/etc/cron.d/*`, per-user spools, run-parts dirs,
+  anacron), `at` jobs, systemd units/timers (with `ExecStart`/`OnCalendar` and
+  `.wants/`-symlink *enabled* state), user units under `~/.config/systemd/user`,
+  `linger`, and legacy startup (`rc.local`). State is deliberately **unattributed**
+  unless the artifact names a user (a per-user crontab, a linger file, a user unit),
+  and the facet federates two dimensions it never conflates: the current-state
+  inventory (from the collector) and in-window establishment **acts** (a
+  `FILE_CHANGE` under a persistence path or an audited persistence-tool `execve`,
+  attributed by auid). A clean bill ("did NOT establish persistence") is an
+  *evidenced negative* requiring BOTH the state inventory and act auditing present,
+  or it degrades to PARTIAL rather than falsely clearing the user. Conservation is
+  counted (records scanned / unparseable); every artifact keeps its file citation.
+  Persistence is a first-class question family (15th), federated into the Core
+  overview, so `Gaps` no longer claims "no collector for scheduled-task state".
+  Six contract questions move CONTRACTED -> CERTIFIED (SP-01 cron/at inventory +
+  per-user attribution, SP-06 timer schedule, SP-07 enabled-at-boot, SP-13 user
+  units + linger, SP-14 established-in-window, SP-15 clean-bill scoped negative;
+  77 total), each with a CLI-path proving test in `TestPersistence`.
 - **Deterministic query/filter/pivot layer (`openpath/query.py`).** The single
   highest-leverage capability for the production contract: most projection
   questions ("did {user} delete an account?", "what files under /etc did they

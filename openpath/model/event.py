@@ -45,6 +45,11 @@ class EventType(enum.Enum):
     # Software
     PACKAGE_CHANGE = "package_change"  # install/remove/update
 
+    # Persistence / scheduled execution (current-state inventory: cron, at,
+    # systemd units/timers, linger, legacy startup). Unattributed unless the
+    # artifact names a user (a per-user crontab) or a file-change event ties one.
+    PERSISTENCE = "persistence"
+
     # Network
     NETWORK = "network"          # connect/bind/listen
 
@@ -135,6 +140,8 @@ class Event:
                     or (f"gid {a.get('id')}" if a.get("id") is not None else "group"))
         if t is EventType.PACKAGE_CHANGE:
             return ("package", a.get("package") or "?")
+        if t is EventType.PERSISTENCE:
+            return ("persistence", a.get("artifact") or a.get("path") or self.summary)
         if t is EventType.PRIVILEGE_ESCALATION:
             if a.get("cmd"):
                 return ("command", a.get("cmd"))
