@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from openpath.facets.base import AnalysisContext, AnyOf, Facet, Requirement
+from openpath.model.coverage import Gap, SourceStatus
 from openpath.model.event import EventType
 from openpath.model.finding import Finding
 
@@ -118,6 +119,24 @@ class LoginFacet(Facet):
                      "/var/log/auth.log is present"),
     )
 
+    def _login_accounting_active(self, ctx: AnalysisContext) -> bool:
+        """True if a login source is genuinely RECORDING logins (so a 'no logins'
+        answer is an evidenced negative, not an artifact of disabled accounting).
+
+        wtmp counts only when its accounting instrument is present (an empty wtmp
+        file trips it False); the sshd journal / auth.log count only when they are
+        AVAILABLE (carry records). All three empty/absent => login accounting is not
+        witnessed, and a negative must be disclosed rather than certified.
+        """
+        w = ctx.ledger.get("wtmp")
+        if w is not None and w.has_instrument("wtmp accounting present"):
+            return True
+        for sid in ("journal.sshd", "auth"):
+            s = ctx.ledger.get(sid)
+            if s is not None and s.status == SourceStatus.AVAILABLE:
+                return True
+        return False
+
     def analyze(self, ctx: AnalysisContext) -> Finding:
         f = self._new_finding(ctx)
         f.gaps.extend(self._prereq_gaps(ctx))
@@ -157,13 +176,30 @@ class LoginFacet(Facet):
                                for e in failed} - {None})
 
         if not login_events and not failed and not pam and not locks:
-            if has_success_source:
+            # A "no logins" negative is trustworthy ONLY when a login source is
+            # genuinely RECORDING logins. An empty wtmp / empty sshd journal / absent
+            # auth is not a witness -- it cannot tell "nobody logged in" from "login
+            # accounting is off" -- so a negative from it must be DISCLOSED, never
+            # certified. (The Sessions facet already treats the same empty wtmp as
+            # UNANSWERABLE; this keeps Login consistent instead of contradicting it.)
+            if has_success_source and self._login_accounting_active(ctx):
                 f.summary = (
                     f"No logins for {ctx.subject.username} in "
                     f"{ctx.window.label or 'the window'} (evidenced negative).")
             else:
-                f.summary = (f"Cannot determine when/where "
-                             f"{ctx.subject.username} logged in (see gaps).")
+                if not any(g.question == "Login" for g in f.gaps):
+                    f.gaps.append(Gap(
+                        "Login",
+                        "no login source is actively recording logins for this "
+                        "window (wtmp is empty/disabled and no sshd journal or "
+                        "auth.log has records); 'no logins' cannot be distinguished "
+                        "from missing login accounting.",
+                        None,
+                        "enable wtmp login accounting, or provide the sshd journal / "
+                        "auth.log, so a login negative is evidenced."))
+                f.summary = (
+                    f"Cannot confirm whether {ctx.subject.username} logged in: login "
+                    f"accounting is unavailable on this host (see gaps).")
             return f
 
         pam_svcs = sorted({e.attrs.get("service") for e in pam
